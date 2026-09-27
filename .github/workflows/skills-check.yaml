@@ -94,3 +94,11 @@ jobs:
           printf '# [t] x\n\n## Goal\ndone\n' > "$t"
           python3 "$s" "$t"
           tail -1 "$t" | grep -q 'Do not push or open a pull request.'
+
+      - name: runs.py smoke test
+        run: |
+          set -euo pipefail
+          export HERDR_SKILLS_DATA_HOME="$(mktemp -d)"
+          r=skills/herdr-parallel-worktree/scripts/runs.py
+          python3 "$r" --help >/dev/null
+          python3 "$r" show --root . | jq -e 'length == 0'

@@ -11,7 +11,7 @@ To install one skill, put its name from the table below in `<skill>`.
 <!-- skills:start -->
 | Skill | Description |
 |---|---|
-| [`herdr-parallel-worktree`](skills/herdr-parallel-worktree/SKILL.md) | Runs several tasks in parallel inside herdr, one git worktree workspace and one visible `claude` worker per task, so you can watch each from the sidebar. Workers get a brief built from a customizable template; worker permission flags are asked on first use. |
+| [`herdr-parallel-worktree`](skills/herdr-parallel-worktree/SKILL.md) | Runs several tasks in parallel inside herdr, one git worktree workspace and one visible `claude` worker per task, so you can watch each from the sidebar. Workers get a brief built from a customizable template; worker permission flags are asked on first use. Finished workers can be cleaned up and resumed later by name, conversation included. |
 <!-- skills:end -->
 
 ## Install
@@ -76,7 +76,7 @@ Per-user settings live outside the skill directory, so they survive reinstalls a
 ${HERDR_SKILLS_DATA_HOME:-~/.local/share/herdr-skills}/<skill>/
 ```
 
-`herdr-parallel-worktree` keeps `config.json` (worker `claude` flags), `briefs/` (generated worker briefs) and an optional `brief-template.md` (your own brief template) there. Ask Claude to "change the brief template" to customize it.
+`herdr-parallel-worktree` keeps `config.json` (worker `claude` flags), `briefs/` (generated worker briefs), `runs.json` (started workers and their Claude session IDs, used for cleanup and resume) and an optional `brief-template.md` (your own brief template) there. Ask Claude to "change the brief template" to customize it.
 
 ## Adding a skill
 

@@ -11,7 +11,7 @@
 <!-- skills:start -->
 | 스킬 | 설명 |
 |---|---|
-| [`herdr-parallel-worktree`](skills/herdr-parallel-worktree/SKILL.md) | herdr 안에서 여러 작업을 병렬로 진행합니다. 작업마다 git worktree workspace와 눈에 보이는 `claude` 작업자를 하나씩 띄워, 사이드바에서 각각의 진행을 볼 수 있습니다. 작업자 지시서는 바꿀 수 있는 템플릿으로 만들고, 작업자 권한 옵션은 처음 쓸 때 묻습니다. |
+| [`herdr-parallel-worktree`](skills/herdr-parallel-worktree/SKILL.md) | herdr 안에서 여러 작업을 병렬로 진행합니다. 작업마다 git worktree workspace와 눈에 보이는 `claude` 작업자를 하나씩 띄워, 사이드바에서 각각의 진행을 볼 수 있습니다. 작업자 지시서는 바꿀 수 있는 템플릿으로 만들고, 작업자 권한 옵션은 처음 쓸 때 묻습니다. 끝난 작업자는 정리했다가 나중에 이름으로 다시 열 수 있으며, 대화 내용도 그대로 이어집니다. |
 <!-- skills:end -->
 
 ## 설치
@@ -76,7 +76,7 @@ npx skills add nyjin/herdr-skills -s herdr-parallel-worktree -a claude-code -g
 ${HERDR_SKILLS_DATA_HOME:-~/.local/share/herdr-skills}/<skill>/
 ```
 
-`herdr-parallel-worktree`는 이곳에 `config.json`(작업자 `claude` 옵션), `briefs/`(만들어진 작업자 지시서), 그리고 선택적으로 `brief-template.md`(내 지시서 템플릿)를 둡니다. 템플릿을 바꾸려면 Claude에게 "지시서 템플릿 바꿔줘"라고 하세요.
+`herdr-parallel-worktree`는 이곳에 `config.json`(작업자 `claude` 옵션), `briefs/`(만들어진 작업자 지시서), `runs.json`(띄운 작업자와 그 Claude 세션 ID를 기록하며, 정리와 재개에 쓰임), 그리고 선택적으로 `brief-template.md`(내 지시서 템플릿)를 둡니다. 템플릿을 바꾸려면 Claude에게 "지시서 템플릿 바꿔줘"라고 하세요.
 
 ## 스킬 추가하기
 

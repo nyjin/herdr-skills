@@ -2,7 +2,7 @@
 name: herdr-parallel-worktree
 license: MIT
 description: >-
-  Visible parallel coding workers in herdr: one git worktree, branch and watchable claude session per task. Use inside herdr (HERDR_ENV=1) when the user wants 2+ independent coding jobs (tickets, bugfixes, refactors, chores) done at the same time, each on its own worktree or branch — "in parallel", "a worker per fix", "each in its own worktree", "병렬로", "동시에", "각각 맡겨" — especially when they want to watch the workers or refuse invisible subagents. Use it in place of Agent subagents, dispatching-parallel-agents or using-git-worktrees for this. Also use for anything about the worker brief (지시서) template or worker permission flags: show, edit, lock in steps, reset to default. Skip outside herdr, and for single-pane herdr commands, agent status checks, deleting old worktrees, and conceptual git/tmux questions.
+  Visible parallel coding workers in herdr: one git worktree, branch and watchable claude session per task. Use inside herdr (HERDR_ENV=1) when the user wants 2+ independent coding jobs (tickets, bugfixes, refactors, chores) done at the same time, each on its own worktree or branch — "in parallel", "a worker per fix", "each in its own worktree", "병렬로", "동시에", "각각 맡겨" — especially when they want to watch the workers or refuse invisible subagents. Use it in place of Agent subagents, dispatching-parallel-agents or using-git-worktrees for this. Also use for anything about the worker brief (지시서) template or worker permission flags, for cleaning up finished worker worktrees ("정리해줘"), and for resuming a cleaned-up worker by name ("resume proj-101", "다시 열어줘"). Skip outside herdr, and for single-pane herdr commands, agent status checks, removing worktrees this skill did not create, and conceptual git/tmux questions.
 ---
 
 # herdr parallel worktree
@@ -24,6 +24,8 @@ This skill assumes the official `herdr` skill for CLI basics (read sources, stat
 The worker brief template is not in `config.json`; it is a file. Its lookup order, filling rules and how to change it are in `references/brief-filling.md`. When the user says "change the brief template", "show the template" or "reset the template", follow section 5 of that document.
 
 Schema: `references/config.schema.json`.
+
+Every started worker is also recorded in `DATA_DIR/runs.json` by `scripts/runs.py` (step 3). Cleanup and resume rely on it: herdr cannot tell which worktrees this skill created, and a worker's Claude session can only be resumed if its session ID and worktree path were kept.
 
 1. **Location**: `DATA_DIR/config.json`, where `DATA_DIR` is `${HERDR_SKILLS_DATA_HOME:-~/.local/share/herdr-skills}/herdr-parallel-worktree/`. It does not depend on how the skill was installed, so settings survive skill updates.
 2. **Initialize**: if the file is missing or fails the schema check, ask with AskUserQuestion before starting any work. Offer the two options below; the user may type their own arguments via "Other" (split on whitespace into an array; empty input means `[]`).
@@ -56,6 +58,8 @@ git -C "$ROOT" cat-file -e "HEAD:<path the task touches>" 2>/dev/null || echo "n
 
 If a path the task touches is missing from HEAD or modified (` M`, `??`), raise it in the confirmation question and let the user choose: "commit first and use that commit as base", "proceed as is", or "change the task". The orchestrator never commits or stashes on the user's behalf. Changes unrelated to the tasks need no mention.
 
+**Offer to clean up finished workers.** Read `references/cleanup.md` and run its scan. If there are candidates, offer them in the same confirmation question as the new tasks; never clean up without that confirmation.
+
 Put the task list together and **get the user's confirmation once**. For each task decide:
 
 - Name: `[a-z][a-z0-9_-]{0,31}`, unique. Used as both the sidebar workspace label and the worker name (e.g. `proj-101`)
@@ -71,6 +75,7 @@ More tasks means more concurrent claude sessions, which hit usage limits sooner.
 
 ```bash
 BASE="$(git -C "$ROOT" rev-parse HEAD)"
+FROM_BRANCH="$(git -C "$ROOT" symbolic-ref --short -q HEAD || echo "$BASE")"   # cleanup checks whether the work was merged back here
 REPO_KEY="$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir)"
 WS_KEY="$(herdr workspace get "$HERDR_WORKSPACE_ID" | jq -r '.result.workspace.worktree.repo_key // empty')"
 if [ "$WS_KEY" = "$REPO_KEY" ]; then LOC=(--workspace "$HERDR_WORKSPACE_ID"); else LOC=(--cwd "$ROOT"); fi
@@ -127,10 +132,10 @@ herdr agent start <name> --kind claude --pane "$P" --timeout 20000 -- "${ARGS[@]
 - **`--add-dir "$BRIEFS"`**: the brief lives outside the worktree. This lets the worker read it whatever its permission settings.
 - **The final `--`**: `--add-dir` takes multiple values. Without the `--` right after it, the instruction line is swallowed as another path and the worker starts with no instructions at all.
 
-Workers start working immediately, so doing this step task by task still runs them all concurrently. Handle the result like this:
+Workers start working immediately, so doing this step task by task still runs them all concurrently. Handle the result like this, then record the worker (below):
 
-- **`idle`**: the first turn finished within 20 seconds. A short task may already be done; check in step 4.
-- **`timeout`**: usually fine. `agent start` reports success only once the worker is waiting for input (`idle`), but the worker starts working at once and stays `working` for a long time. herdr then does not assign the worker name, so check the pane status and assign it yourself.
+- **`idle` or `done`**: the first turn finished within 20 seconds. A short task may already be done; check in step 4.
+- **`timeout`**: usually fine. `agent start` reports success only once the worker's turn has finished (`idle` or `done`), but the worker starts working at once and stays `working` for a long time. herdr then does not assign the worker name, so check the pane status and assign it yourself.
 
   ```bash
   S="$(herdr pane get "$P" | jq -r '.result.pane.agent_status // empty')"
@@ -139,9 +144,17 @@ Workers start working immediately, so doing this step task by task still runs th
   - `working`, `idle`, `done`: `herdr agent rename "$P" <name>`
   - `blocked`: assign the name, then handle the dialog as below
   - empty (claude not detected): look at the screen with `herdr pane read "$P" --source visible --lines 40`, report to the user, and stop
-- **`agent_not_ready` or `blocked`**: a dialog is open on the worker's screen. Check it with `herdr agent read <name> --source visible --lines 40` and **never answer it yourself.** Tell the user what the screen shows and let them handle it in that workspace in the sidebar. Once the dialog closes, confirm the worker picks up its positional instructions with `herdr agent wait <name> --until working --until idle --timeout 120000` and `agent read`.
+- **`agent_not_ready` or `blocked`**: a dialog is open on the worker's screen. Check it with `herdr agent read <name> --source visible --lines 40` and **never answer it yourself.** Tell the user what the screen shows and let them handle it in that workspace in the sidebar. Once the dialog closes, confirm the worker picks up its positional instructions with `herdr agent wait <name> --until working --until idle --until done --timeout 120000` (herdr reports a finished turn as either `idle` or `done`) and `agent read`.
   - **Folder trust dialog** ("Is this a project you trust?"): Claude Code does not yet trust the source repository. It does not appear for worktrees of trusted repositories, and `--dangerously-skip-permissions` does not skip it
   - **Permission mode warning**: shown once to users running `--dangerously-skip-permissions` for the first time
+
+Once the worker is running and named, record it. This stores its Claude session ID, which is what lets the user resume it after cleanup:
+
+```bash
+python3 "<skill directory>/scripts/runs.py" add --name <name> --root "$ROOT" --branch <branch> --base "$BASE" --from-branch "$FROM_BRANCH" --worktree "$WT" --workspace "$W" --pane "$P" --brief "$BRIEF"
+```
+
+If `session_id` in the output is `null` (claude not detected yet), that is fine: cleanup re-reads it from the pane before removing anything. If `add` fails because an open run with the same name exists, a previous worker still holds that name: handle it with the cleanup scan (`references/cleanup.md`) or pick another name.
 
 ## 4. Wait and watch
 
@@ -165,15 +178,14 @@ git -C "$WT" diff --stat "$BASE"
 
 Report a table per task: `name | branch | commits | change summary | tests | open issues`. If `## Result` is cut off on screen, raise `--lines`. If it still does not show, ask the worker to write its result to a temp file and reply with only the path, then read that file.
 
-## 6. Clean up (only after user confirmation)
+## 6. Clean up and resume
 
-The default is to **leave everything in place**: the user decides on push, PR and merge after reviewing each workspace. When asked to clean up, remove only workspaces this skill created.
+The default is to **leave everything in place**: the user decides on push, PR and merge after reviewing each workspace.
 
-```bash
-herdr worktree remove --workspace "$W"   # removes the worktree and closes the workspace. Fails on uncommitted changes. --force only after user confirmation
-```
+- **Cleaning up** finished workers — offered at step 0 of the next run, or when the user asks: follow `references/cleanup.md`. It only removes workers that are recorded, not `working` or `blocked`, clean, and whose work is merged, pushed or empty, always after confirmation, and reports how to resume each one.
+- **Resuming** a worker by name ("resume proj-101"): follow `references/resume.md`. It recreates the worktree at the recorded path and runs `claude --resume <session id>`, restoring the conversation.
 
-The branch remains. Delete branches only when the user asks, after merging.
+Cleanup keeps branches. Delete a branch only when the user asks, after merging.
 
 ## Never
 

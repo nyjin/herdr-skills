@@ -13,8 +13,8 @@ import re
 import sys
 
 TAIL = (
-    "When the work is done, commit to this branch and end your final response with a "
-    "`## Result` heading that covers the change summary, test results and open issues. "
+    "When the work is done, commit any changes you made to this branch, and end your final response "
+    "with a `## Result` heading that covers the change summary, test results and open issues. "
     "Do not push or open a pull request."
 )
 FENCE = re.compile(r"^\s{0,3}(`{3,}|~{3,})")
