@@ -2,7 +2,7 @@
 
 [English](README.md) | **한국어**
 
-[herdr](https://herdr.dev)(터미널 안에서 돌아가는 에이전트 멀티플렉서)용 Claude Code 스킬(Agent Skills) 모음입니다. 여러 코딩 에이전트를 git worktree로 나눠 병렬로 돌리고, 보이지 않는 서브에이전트 대신 각 Claude Code 작업자의 진행을 herdr 사이드바에서 직접 봅니다. Claude Code 플러그인으로 전부 설치하거나, `gh skill`·`npx skills`로 필요한 스킬만 골라 설치할 수 있습니다.
+터미널 안에서 돌아가는 에이전트 멀티플렉서 [herdr](https://herdr.dev)를 위한 Claude Code 스킬(Agent Skills) 모음입니다. 여러 코딩 에이전트를 git worktree로 나눠 병렬로 돌립니다. 보이지 않는 서브에이전트와 달리, 각 Claude Code 작업자가 일하는 모습을 herdr 사이드바에서 직접 볼 수 있습니다. Claude Code 플러그인으로 전부 설치하거나, `gh skill`·`npx skills`로 필요한 스킬만 골라 설치하세요.
 
 ## 수록 스킬
 
@@ -16,7 +16,7 @@
 
 ## 설치
 
-아래 두 방법 중 **하나만** 쓰세요. **둘을 겹쳐 쓰지 마세요.** 플러그인 스킬은 `/herdr-skills:<skill>`, 개별 설치본은 `/<skill>`로 붙는데, 한쪽이 다른 쪽을 덮지 않습니다. 같은 스킬을 양쪽으로 설치하면 두 벌이 남아 두 번 트리거됩니다. 개별 설치로 옮기려면 먼저 `/plugin uninstall herdr-skills@herdr-skills`로 플러그인을 지우세요.
+아래 두 방법 중 **하나만** 쓰세요. 플러그인으로 설치한 스킬은 `/herdr-skills:<skill>`, 개별로 설치한 스킬은 `/<skill>` 이름으로 등록되고 서로 덮어쓰지 않습니다. 그래서 같은 스킬을 양쪽으로 설치하면 두 벌이 남아 두 번 트리거됩니다. 개별 설치로 옮기려면 먼저 `/plugin uninstall herdr-skills@herdr-skills`로 플러그인을 지우세요.
 
 ### 전체 설치 — Claude Code 플러그인
 
@@ -83,9 +83,9 @@ ${HERDR_SKILLS_DATA_HOME:-~/.local/share/herdr-skills}/<skill>/
 1. `skills/<name>/SKILL.md`를 만듭니다. frontmatter의 `name`은 디렉터리 이름과 같아야 하고, 소문자·숫자·하이픈만 씁니다.
 2. `README.md`와 `README.ko.md`의 스킬 표(`skills:start`와 `skills:end` 마커 사이)에 알파벳 순서로 한 줄씩 추가합니다.
 3. `.claude-plugin/plugin.json`의 `version`을 올립니다.
-4. 머지한 뒤 릴리스를 만들어야 `gh skill` 사용자에게 변경이 전달됩니다: `gh skill publish --tag v<version>`
+4. 머지한 뒤에는 `gh skill publish --tag v<version>`으로 릴리스를 만듭니다. 그래야 `gh skill` 사용자에게 변경이 전달됩니다.
 
-CI(`.github/workflows/skills-check.yaml`)는 `gh skill publish --dry-run`으로 스킬 스펙을 검증하고, `name`과 디렉터리 이름이 같은지, 두 README의 스킬 표가 `skills/`와 맞는지, 플러그인 매니페스트가 올바른지 확인합니다.
+CI(`.github/workflows/skills-check.yaml`)는 `gh skill publish --dry-run`으로 스킬 스펙을 검증합니다. 그 밖에 `name`과 디렉터리 이름이 같은지, 두 README의 스킬 표가 `skills/`와 맞는지, 플러그인 매니페스트가 올바른지도 확인합니다.
 
 ## 라이선스
 
