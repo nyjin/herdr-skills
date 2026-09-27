@@ -25,7 +25,7 @@ The worker brief template is not in `config.json`; it is a file. Its lookup orde
 
 Schema: `references/config.schema.json`.
 
-Every started worker is also recorded in `DATA_DIR/runs.json` by `scripts/runs.py` (step 3). Cleanup and resume rely on it: herdr cannot tell which worktrees this skill created, and a worker's Claude session can only be resumed if its session ID and worktree path were kept.
+Every started worker is also recorded in `DATA_DIR/runs.json` by `scripts/runs.py` (step 3). Cleanup and resume rely on it: herdr cannot tell which worktrees this skill created, and a worker can only be resumed if the clues are kept — which agent ran, the session reference herdr's integration reported, and the worktree path.
 
 1. **Location**: `DATA_DIR/config.json`, where `DATA_DIR` is `${HERDR_SKILLS_DATA_HOME:-~/.local/share/herdr-skills}/herdr-parallel-worktree/`. It does not depend on how the skill was installed, so settings survive skill updates.
 2. **Initialize**: if the file is missing or fails the schema check, ask with AskUserQuestion before starting any work. Offer the two options below; the user may type their own arguments via "Other" (split on whitespace into an array; empty input means `[]`).
@@ -148,13 +148,13 @@ Workers start working immediately, so doing this step task by task still runs th
   - **Folder trust dialog** ("Is this a project you trust?"): Claude Code does not yet trust the source repository. It does not appear for worktrees of trusted repositories, and `--dangerously-skip-permissions` does not skip it
   - **Permission mode warning**: shown once to users running `--dangerously-skip-permissions` for the first time
 
-Once the worker is running and named, record it. This stores its Claude session ID, which is what lets the user resume it after cleanup:
+Once the worker is running and named, record it. This stores the agent and the session reference herdr reports for the pane, which is what lets the user resume it after cleanup:
 
 ```bash
 python3 "<skill directory>/scripts/runs.py" add --name <name> --root "$ROOT" --branch <branch> --base "$BASE" --from-branch "$FROM_BRANCH" --worktree "$WT" --workspace "$W" --pane "$P" --brief "$BRIEF"
 ```
 
-If `session_id` in the output is `null` (claude not detected yet), that is fine: cleanup re-reads it from the pane before removing anything. If `add` fails because an open run with the same name exists, a previous worker still holds that name: handle it with the cleanup scan (`references/cleanup.md`) or pick another name.
+If `session_id` in the output is `null` (not reported yet), that is fine: cleanup re-reads it from the pane before removing anything. If `add` fails because an open run with the same name exists, a previous worker still holds that name: handle it with the cleanup scan (`references/cleanup.md`) or pick another name.
 
 ## 4. Wait and watch
 
@@ -183,7 +183,7 @@ Report a table per task: `name | branch | commits | change summary | tests | ope
 The default is to **leave everything in place**: the user decides on push, PR and merge after reviewing each workspace.
 
 - **Cleaning up** finished workers — offered at step 0 of the next run, or when the user asks: follow `references/cleanup.md`. It only removes workers that are recorded, not `working` or `blocked`, clean, and whose work is merged, pushed or empty, always after confirmation, and reports how to resume each one.
-- **Resuming** a worker by name ("resume proj-101"): follow `references/resume.md`. It recreates the worktree at the recorded path and runs `claude --resume <session id>`, restoring the conversation.
+- **Resuming** a worker by name ("resume proj-101"): follow `references/resume.md`. It recreates the worktree at the recorded path, works out the agent's native resume option from the recorded clues (the same session reference herdr uses to restore agents), and checks that the conversation came back.
 
 Cleanup keeps branches. Delete a branch only when the user asks, after merging.
 

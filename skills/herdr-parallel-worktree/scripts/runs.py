@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Registry of workers started by herdr-parallel-worktree: record, scan for cleanup, resume info.
+"""Registry of workers started by herdr-parallel-worktree: record, scan for cleanup, resume clues.
 
 The registry is DATA_DIR/runs.json (DATA_DIR = ${HERDR_SKILLS_DATA_HOME:-~/.local/share/herdr-skills}/herdr-parallel-worktree).
 herdr does not know which worktrees this skill created, so cleanup only ever considers entries recorded here.
@@ -9,7 +9,11 @@ Usage:
   runs.py scan --root ROOT [--fetch]      classify open runs of ROOT: candidates, keep, stale (JSON)
   runs.py mark-cleaned --root ROOT --name N [--session-id SID]
   runs.py mark-open --root ROOT --name N --workspace W --pane P
-  runs.py show --root ROOT [--name N]     print runs (JSON), including resume commands for cleaned ones
+  runs.py show --root ROOT [--name N]     print runs (JSON)
+
+It records clues, not procedures: which agent herdr saw in the pane and the session reference herdr's
+integration reported (the same data herdr uses to resume agents after a server restart), plus the worktree
+path and branch. How to resume a given agent is left to the orchestrator to work out at resume time.
 
 All output is JSON on stdout; errors go to stderr with exit code 1.
 """
@@ -114,28 +118,17 @@ def find(runs, root, name, state=None):
     return hits[-1] if hits else None
 
 
-def session_file(worktree, session_id):
-    """Claude Code stores sessions per working directory: ~/.claude/projects/<path with / and . as ->/<id>.jsonl"""
-    key = worktree.replace("/", "-").replace(".", "-")
-    return os.path.expanduser(f"~/.claude/projects/{key}/{session_id}.jsonl")
-
-
 def current_session(pane):
+    """Return herdr's agent_session for the pane ({agent, kind, source, value}) or None."""
     info = herdr_json("pane", "get", pane)
     if not info:
         return None
-    return ((info.get("pane") or {}).get("agent_session") or {}).get("value")
+    return (info.get("pane") or {}).get("agent_session") or None
 
 
-def resume_commands(r):
-    return {
-        "ask": f'resume {r["name"]}',
-        "manual": [
-            f'herdr worktree create --cwd {r["root"]} --branch {r["branch"]} --path {r["worktree"]} --label {r["name"]}',
-            f'claude --resume {r["session_id"]}   # run in the new workspace pane' if r.get("session_id")
-            else "claude --continue   # no session id was recorded; resumes the latest session in that directory",
-        ],
-    }
+def session_fields(sess):
+    sess = sess or {}
+    return {"agent": sess.get("agent"), "session_id": sess.get("value"), "session_source": sess.get("source")}
 
 
 def cmd_add(a):
@@ -146,7 +139,7 @@ def cmd_add(a):
     runs.append({
         "name": a.name, "root": root, "branch": a.branch, "base": a.base, "from_branch": a.from_branch,
         "worktree": a.worktree, "workspace": a.workspace, "pane": a.pane, "brief": a.brief,
-        "session_id": current_session(a.pane), "state": "open", "created_at": now(), "cleaned_at": None,
+        **session_fields(current_session(a.pane)), "state": "open", "created_at": now(), "cleaned_at": None,
     })
     save(runs)
     print(json.dumps(runs[-1], ensure_ascii=False))
@@ -165,9 +158,9 @@ def classify(r, fetch):
     facts["agent_status"] = wsinfo.get("agent_status")
     facts["focused"] = wsinfo.get("focused", False)
     if wsinfo:
-        sid = current_session(r["pane"])
-        if sid:
-            facts["session_id"] = sid
+        sess = current_session(r["pane"])
+        if sess and sess.get("value"):
+            facts.update(session_fields(sess))
     if facts["agent_status"] in ("working", "blocked"):
         keep.append(f"worker is {facts['agent_status']}")
     if facts["focused"]:
@@ -226,8 +219,9 @@ def cmd_scan(a):
             continue
         tracked.add(r["worktree"])
         kind, reasons, facts = classify(r, a.fetch)
-        entry = {"name": r["name"], "branch": r["branch"], "worktree": r["worktree"],
-                 "workspace": r["workspace"], **facts, "session_id": facts.get("session_id") or r.get("session_id")}
+        entry = {"name": r["name"], "branch": r["branch"], "worktree": r["worktree"], "workspace": r["workspace"],
+                 **facts, "agent": facts.get("agent") or r.get("agent"),
+                 "session_id": facts.get("session_id") or r.get("session_id")}
         if kind == "keep":
             out["keep"].append({**entry, "reasons": reasons})
         else:
@@ -247,10 +241,11 @@ def cmd_mark_cleaned(a):
         die(f"no open run named {a.name}")
     if a.session_id:
         r["session_id"] = a.session_id
+    if a.agent:
+        r["agent"] = a.agent
     r["state"], r["cleaned_at"] = "cleaned", now()
     save(runs)
-    print(json.dumps({**r, "session_file_exists": bool(r.get("session_id")) and os.path.exists(
-        session_file(r["worktree"], r["session_id"])), "resume": resume_commands(r)}, ensure_ascii=False, indent=2))
+    print(json.dumps(r, ensure_ascii=False, indent=2))
 
 
 def cmd_mark_open(a):
@@ -259,6 +254,10 @@ def cmd_mark_open(a):
     if not r:
         die(f"no cleaned run named {a.name}")
     r.update(state="open", workspace=a.workspace, pane=a.pane, cleaned_at=None)
+    # The resumed (or freshly started) agent may report a different agent or session; keep the clues current.
+    sess = current_session(a.pane)
+    if sess and sess.get("value"):
+        r.update(session_fields(sess))
     save(runs)
     print(json.dumps(r, ensure_ascii=False))
 
@@ -266,11 +265,6 @@ def cmd_mark_open(a):
 def cmd_show(a):
     root = norm_root(a.root)
     runs = [r for r in load() if r["root"] == root and (a.name is None or r["name"] == a.name)]
-    for r in runs:
-        if r["state"] == "cleaned":
-            r["resume"] = resume_commands(r)
-            r["session_file_exists"] = bool(r.get("session_id")) and os.path.exists(
-                session_file(r["worktree"], r["session_id"]))
     print(json.dumps(runs, ensure_ascii=False, indent=2))
 
 
@@ -283,7 +277,7 @@ def main():
     s.add_argument("--brief")
     s = sub.add_parser("scan"); s.add_argument("--root", required=True); s.add_argument("--fetch", action="store_true")
     s = sub.add_parser("mark-cleaned"); s.add_argument("--root", required=True); s.add_argument("--name", required=True)
-    s.add_argument("--session-id")
+    s.add_argument("--session-id"); s.add_argument("--agent")
     s = sub.add_parser("mark-open"); s.add_argument("--root", required=True); s.add_argument("--name", required=True)
     s.add_argument("--workspace", required=True); s.add_argument("--pane", required=True)
     s = sub.add_parser("show"); s.add_argument("--root", required=True); s.add_argument("--name")

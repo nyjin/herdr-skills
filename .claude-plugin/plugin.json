@@ -1,6 +1,6 @@
 {
   "name": "herdr-skills",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Claude Code skills for herdr — run parallel tasks in git worktrees with visible claude workers (skill list in README)",
   "author": {
     "name": "nyjin"

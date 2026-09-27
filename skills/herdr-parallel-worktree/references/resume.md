@@ -1,53 +1,71 @@
 # Resuming a worker
 
-Use when the user asks to bring back a worker — "resume proj-101", "proj-101 다시 열어줘", "continue the payments worker". It works for workers that were cleaned up (`references/cleanup.md`) and for open workers whose claude has exited.
+Use when the user asks to bring back a worker — "resume proj-101", "proj-101 다시 열어줘", "continue the payments worker". It works for workers that were cleaned up (`references/cleanup.md`) and for open workers whose agent has exited.
 
-A Claude Code session is stored per working directory (`~/.claude/projects/<path>/<session id>.jsonl`). So a session can only be resumed from the **same worktree path** it ran in. Cleanup keeps the branch and the session log, so recreating the worktree at the recorded path and running `claude --resume <session id>` restores the full conversation.
+This document gives clues and a way of working, not a per-agent recipe. Agents and their options change faster than any table could be kept current, so work out how to resume the agent in front of you, confirm it on the installed version, and check that it actually worked.
 
-## 1. Find the run
+## 1. Gather the clues
 
 ```bash
 python3 "<skill directory>/scripts/runs.py" show --root "$ROOT" --name <name>
 ```
 
 - No match: list the runs (`show` without `--name`) and ask which one.
-- `state: open` and its workspace still exists: nothing to recreate. Tell the user it is in the sidebar; if claude exited there, go to step 3 with the recorded pane.
-- `state: cleaned`: continue.
+- `state: open` and its workspace still exists: nothing to recreate. Tell the user it is in the sidebar; if the agent exited there, go to step 3 with the recorded pane.
 
-Check before recreating:
-- The branch still exists: `git -C "$ROOT" rev-parse --verify --quiet <branch>`. If it was deleted, the worktree cannot be recreated from it; report and stop.
-- Nothing occupies the recorded worktree path. If something does, stop and report; never overwrite it.
-- `session_file_exists`. If false, the worktree can come back but the conversation cannot; say so and ask whether to start a fresh worker there instead.
+The record holds facts herdr reported, not instructions:
+
+| Field | What it tells you |
+|---|---|
+| `agent` | which agent herdr detected in the pane (e.g. `claude`, `codex`) — also the `--kind` for `herdr agent start` |
+| `session_id`, `session_source` | the native session reference the agent's herdr integration reported. herdr itself uses this same reference to resume agents after a server restart |
+| `worktree` | the exact path the agent ran in. Many agents store or look up sessions per working directory, so recreate this path exactly |
+| `branch` | what to check out there |
+
+If you can tell where this agent keeps its sessions (its documentation or `--help` usually says), check that the reference still exists before recreating anything; if it does not, say the conversation cannot come back and ask whether to start a fresh session there instead.
+
+If `session_id` is missing, the agent's herdr integration did not report one (not installed, or too old). The conversation may still be recoverable through the agent's own "continue the latest session in this directory" option, if it has one.
 
 ## 2. Recreate the worktree at the same path
 
+Check first: the branch still exists (`git -C "$ROOT" rev-parse --verify --quiet <branch>`), and nothing occupies the recorded path. If the branch is gone, the worktree cannot come back; report and stop. Never overwrite an occupied path.
+
+Choose where to attach it exactly as in SKILL.md step 1 (`--workspace "$HERDR_WORKSPACE_ID"` when the current workspace is bound to `ROOT`, otherwise `--cwd "$ROOT"`):
+
 ```bash
-OUT="$(herdr worktree create --cwd "$ROOT" --branch <branch> --path <worktree> --label <name> --no-focus)"
+OUT="$(herdr worktree create "${LOC[@]}" --branch <branch> --path <worktree> --label <name> --no-focus)"
 W="$(printf '%s' "$OUT" | jq -r .result.workspace.workspace_id)"
 P="$(printf '%s' "$OUT" | jq -r .result.root_pane.pane_id)"
 ```
 
-The branch already exists, so herdr checks it out instead of creating it. The path must match the recorded one exactly, or `claude --resume` will not find the session.
+The branch already exists, so herdr checks it out instead of creating it.
 
-## 3. Resume claude
+## 3. Work out how to resume this agent
 
-A freshly created pane's shell may not be ready yet, and `agent start` then fails with `agent_pane_busy`. Wait for the prompt first:
+Find the agent's native way to resume a session by its reference, starting from the most authoritative source:
+
+1. **herdr's own restore behaviour.** herdr resumes agents after a server restart with each agent's native resume command; its session-state documentation (https://herdr.dev/docs/session-state/, or `herdr --skill`) describes how. What herdr does is the best hint, because it uses the same session reference you have.
+2. **The installed agent.** `<agent> --help` (and subcommand help) shows what this version actually supports. Confirm the option exists here before relying on it; documentation may describe a newer or older version.
+3. **The agent's documentation**, when the first two leave it unclear.
+
+Then start it in the recreated pane. A freshly created pane's shell may not be ready yet, and `agent start` then fails with `agent_pane_busy`, so wait for the prompt first:
 
 ```bash
 herdr pane run "$P" "echo shell-ready"
 herdr pane wait-output "$P" --match shell-ready --timeout 10000
-ARGS=(); while IFS= read -r a; do ARGS+=("$a"); done < <(jq -r '.workerArgs[]' "$CONFIG")
-herdr agent start <name> --kind claude --pane "$P" --timeout 20000 -- "${ARGS[@]}" --resume <session id>
+herdr agent start <name> --kind <agent> --pane "$P" --timeout 20000 -- <worker args, if they apply to this agent> <resume arguments you found>
 ```
 
-If the user gave a follow-up instruction ("resume proj-101 and fix the failing test"), append `-- "<one-line instruction>"` after `--resume <session id>`, built like step 3's `LINE` in SKILL.md. Without it, the worker opens with its history and waits.
+`config.json`'s `workerArgs` were written for the agent the worker was started with; pass them only if they belong to this agent. If the user gave a follow-up instruction ("resume proj-101 and fix the failing test"), add it the way this agent accepts an initial prompt, as a single line (herdr rejects arguments with newlines). Handle `timeout`, `blocked` and `agent_not_ready` exactly as in SKILL.md step 3.
 
-Handle `timeout`, `blocked` and `agent_not_ready` exactly as in SKILL.md step 3.
+## 4. Verify, record and report
 
-## 4. Record and report
+Check that the conversation really came back: `herdr agent read <name> --source recent-unwrapped --lines 60` should show the earlier turns. If the agent started fresh instead, say so plainly — the worktree and branch are back, but the history is not — and offer to continue as a new session there.
 
 ```bash
 python3 "<skill directory>/scripts/runs.py" mark-open --root "$ROOT" --name <name> --workspace "$W" --pane "$P"
 ```
 
-Tell the user the `<name>` workspace is back in the sidebar with its previous conversation, and continue with SKILL.md steps 4 and 5 if a follow-up instruction was given.
+`mark-open` re-reads the agent and session reference from the pane, so a fresh session started in place of the old one replaces the stale clues.
+
+Tell the user the `<name>` workspace is back in the sidebar, and which command resumed it, so they can reuse it themselves. Continue with SKILL.md steps 4 and 5 if a follow-up instruction was given.
