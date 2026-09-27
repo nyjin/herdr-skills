@@ -1,6 +1,8 @@
 # herdr-skills
 
-Claude Code skills for [herdr](https://herdr.dev), the agent multiplexer that lives in your terminal. Install them all as a Claude Code plugin, or pick individual skills.
+**English** | [한국어](README.ko.md)
+
+Claude Code skills (Agent Skills) for [herdr](https://herdr.dev), the agent multiplexer that lives in your terminal. Run parallel coding agents in separate git worktrees and watch every Claude Code worker from the herdr sidebar — instead of invisible subagents. Install them all as a Claude Code plugin, or pick individual skills with `gh skill` or `npx skills`.
 
 ## Skills
 
@@ -79,11 +81,11 @@ ${HERDR_SKILLS_DATA_HOME:-~/.local/share/herdr-skills}/<skill>/
 ## Adding a skill
 
 1. Create `skills/<name>/SKILL.md`. The frontmatter `name` must equal the directory name and use only lowercase letters, digits and hyphens.
-2. Add a row to the Skills table above, between the `skills:start` and `skills:end` markers, in alphabetical order.
+2. Add a row to the Skills table in both `README.md` and `README.ko.md`, between the `skills:start` and `skills:end` markers, in alphabetical order.
 3. Bump `version` in `.claude-plugin/plugin.json`.
 4. After merging, publish a release so `gh skill` users get the change: `gh skill publish --tag v<version>`.
 
-CI (`.github/workflows/skills-check.yaml`) validates the skills with `gh skill publish --dry-run`, checks that each `name` matches its directory, checks the README table against `skills/`, and runs the plugin manifest validation.
+CI (`.github/workflows/skills-check.yaml`) validates the skills with `gh skill publish --dry-run`, checks that each `name` matches its directory, checks both READMEs' tables against `skills/`, and runs the plugin manifest validation.
 
 ## License
 

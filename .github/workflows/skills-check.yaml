@@ -65,16 +65,19 @@ jobs:
           done < <(find skills -mindepth 2 -maxdepth 2 -name SKILL.md | sort)
           exit "$fail"
 
-      - name: README skills table matches skills/
+      - name: README skills tables match skills/
         run: |
           set -uo pipefail
-          table=$(awk '/<!-- skills:start -->/{f=1;next} /<!-- skills:end -->/{if(f)exit} f' README.md \
-            | sed -nE 's/^\| *\[?`([a-z0-9][a-z0-9-]*)`\]?.*/\1/p' | sort)
           dirs=$(find skills -mindepth 2 -maxdepth 2 -name SKILL.md | cut -d/ -f2 | sort)
-          if [ "$table" != "$dirs" ]; then
-            echo "::error file=README.md::README table ($(echo $table)) != skills/ ($(echo $dirs))"
-            exit 1
-          fi
+          fail=0
+          for readme in README.md README.ko.md; do
+            table=$(awk '/<!-- skills:start -->/{f=1;next} /<!-- skills:end -->/{if(f)exit} f' "$readme" \
+              | sed -nE 's/^\| *\[?`([a-z0-9][a-z0-9-]*)`\]?.*/\1/p' | sort)
+            if [ "$table" != "$dirs" ]; then
+              echo "::error file=${readme}::${readme} table ($(echo $table)) != skills/ ($(echo $dirs))"; fail=1
+            fi
+          done
+          exit "$fail"
 
       - name: Validate plugin manifests
         run: |
