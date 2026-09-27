@@ -3,13 +3,34 @@
   "title": "herdr-parallel-worktree config",
   "description": "Lives at DATA_DIR/config.json as defined in SKILL.md's Configuration section (the same place in the user's home regardless of install method). Values differ per person, so it is never kept in the repository; if the file is missing, SKILL.md's initialization creates it.",
   "type": "object",
-  "required": ["workerArgs"],
+  "required": [
+    "workerArgs"
+  ],
   "properties": {
     "workerArgs": {
       "type": "array",
       "description": "Arguments for the worker claude, passed as-is after `herdr agent start ... --`. An empty array uses each worker's settings default permission mode.",
-      "items": { "type": "string" },
-      "examples": [["--enable-auto-mode"], ["--dangerously-skip-permissions"], []]
+      "items": {
+        "type": "string"
+      },
+      "examples": [
+        [
+          "--enable-auto-mode"
+        ],
+        [
+          "--dangerously-skip-permissions"
+        ],
+        []
+      ]
+    },
+    "hooks": {
+      "type": "string",
+      "enum": [
+        "on",
+        "off"
+      ],
+      "default": "on",
+      "description": "Whether the routing hooks act. Absent means on. See SKILL.md Hooks."
     }
   },
   "additionalProperties": false

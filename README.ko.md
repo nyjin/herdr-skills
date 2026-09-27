@@ -68,6 +68,14 @@ npx skills add nyjin/herdr-skills -s herdr-parallel-worktree -a claude-code -g
 - [herdr](https://herdr.dev) — 스킬은 herdr 세션 안(`HERDR_ENV=1`)에서만 동작합니다
 - `claude`(Claude Code), `git`, `jq`, `python3`
 
+## 훅
+
+`herdr-parallel-worktree`는 스킬 설명(description)을 일부러 짧게 둡니다. 설명은 herdr 밖의 세션까지 포함해 모든 Claude Code 세션에 들어가기 때문입니다. 대신 `PreToolUse` 훅이 스킬이 제때 쓰이게 하고, 이 훅은 herdr 안(`HERDR_ENV=1`)에서만 동작합니다.
+
+- **PreToolUse**: Claude가 다른 방법으로 worktree를 만들려는 순간(`git worktree add`, `EnterWorktree`로 새로 만들기, worktree 격리 서브에이전트) 이를 멈추고 이 스킬을 쓰게 합니다. `EnterWorktree`로 이미 있는 worktree에 들어가는 것은 막지 않습니다. 그 순간 전까지는 비용이 없습니다.
+
+기본으로 켜져 있습니다. 플러그인은 `hooks/hooks.json`에 이 훅을 담고 있고, 스킬만 따로 설치하면 처음 쓸 때 `~/.claude/settings.json`에 등록합니다. 스킬을 처음 실행할 때 켜 둘지, 끌지, 아예 설치하지 않을지 묻고, 나중에도 Claude에게 "herdr 훅 꺼줘"(또는 켜줘, 지워줘)라고 하면 바꿀 수 있습니다.
+
 ## 설정과 데이터
 
 사용자별 설정은 스킬 폴더 밖에 두므로, 다시 설치하거나 업데이트해도 남습니다.

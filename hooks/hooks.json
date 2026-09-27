@@ -1,0 +1,25 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Bash(*worktree add*)",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/skills/herdr-parallel-worktree/scripts/hooks/route.py\" pre-tool-use"
+          }
+        ]
+      },
+      {
+        "matcher": "EnterWorktree|Agent|Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/skills/herdr-parallel-worktree/scripts/hooks/route.py\" pre-tool-use"
+          }
+        ]
+      }
+    ]
+  }
+}

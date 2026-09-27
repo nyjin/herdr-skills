@@ -2,7 +2,7 @@
 name: herdr-parallel-worktree
 license: MIT
 description: >-
-  Visible parallel coding workers in herdr: one git worktree, branch and watchable claude session per task. Use inside herdr (HERDR_ENV=1) when the user wants 2+ independent coding jobs (tickets, bugfixes, refactors, chores) done at the same time, each on its own worktree or branch — "in parallel", "a worker per fix", "each in its own worktree", "병렬로", "동시에", "각각 맡겨" — especially when they want to watch the workers or refuse invisible subagents. Use it in place of Agent subagents, dispatching-parallel-agents or using-git-worktrees for this. Also use for anything about the worker brief (지시서) template or worker permission flags, for cleaning up finished worker worktrees ("정리해줘"), and for resuming a cleaned-up worker by name ("resume proj-101", "다시 열어줘"). Skip outside herdr, and for single-pane herdr commands, agent status checks, removing worktrees this skill did not create, and conceptual git/tmux questions.
+  Run 2+ coding tasks in parallel inside herdr (HERDR_ENV=1), each in its own git worktree with a visible claude worker. Also cleans up or resumes those workers, and manages the worker brief template and this skill's hooks. Not for use outside herdr.
 ---
 
 # herdr parallel worktree
@@ -11,7 +11,7 @@ The main Claude (this session) is the **orchestrator**. For each task it creates
 
 Talk to the user in their language. Briefs may also be written in the user's language.
 
-Requires `herdr`, `claude`, `git`, `jq` and `python3` (for `scripts/finalize-brief.py`). If one is missing, say which and stop.
+Requires `herdr`, `claude`, `git`, `jq` and `python3` (for the scripts). If one is missing, say which and stop.
 
 This skill assumes the official `herdr` skill for CLI basics (read sources, status meanings, error codes); if it is not loaded, read `herdr --skill`. What follows covers only this workflow and the herdr/Claude Code behaviours it has to work around, which the `herdr` skill does not cover.
 
@@ -20,6 +20,7 @@ This skill assumes the official `herdr` skill for CLI basics (read sources, stat
 | Key | Purpose |
 |----|------|
 | `workerArgs` | Array of arguments passed to the worker `claude`. E.g. `["--enable-auto-mode"]`, `["--dangerously-skip-permissions"]`, `[]` (each worker's settings default) |
+| `hooks` | `"on"` (default when absent) or `"off"`: whether the routing hook acts (see Hooks below) |
 
 The worker brief template is not in `config.json`; it is a file. Its lookup order, filling rules and how to change it are in `references/brief-filling.md`. When the user says "change the brief template", "show the template" or "reset the template", follow section 5 of that document.
 
@@ -28,16 +29,32 @@ Schema: `references/config.schema.json`.
 Every started worker is also recorded in `DATA_DIR/runs.json` by `scripts/runs.py` (step 3). Cleanup and resume rely on it: herdr cannot tell which worktrees this skill created, and a worker can only be resumed if the clues are kept — which agent ran, the session reference herdr's integration reported, and the worktree path.
 
 1. **Location**: `DATA_DIR/config.json`, where `DATA_DIR` is `${HERDR_SKILLS_DATA_HOME:-~/.local/share/herdr-skills}/herdr-parallel-worktree/`. It does not depend on how the skill was installed, so settings survive skill updates.
-2. **Initialize**: if the file is missing or fails the schema check, ask with AskUserQuestion before starting any work. Offer the two options below; the user may type their own arguments via "Other" (split on whitespace into an array; empty input means `[]`).
-   - `--enable-auto-mode` — a classifier asks for approval only on risky actions
-   - `--dangerously-skip-permissions` — runs to the end without approvals. Trusted repositories only
-   After the answer, `mkdir -p "$DATA_DIR"`, save `{"workerArgs": [...]}`, and tell the user the saved path in one line. Then add one more line: "Worker briefs use the default template. To lock in your own steps and rules, say 'change the brief template'." Without this line the user has no way of knowing the template can be changed.
+2. **Initialize**: if the file is missing or fails the schema check, ask with AskUserQuestion before starting any work. Ask two questions in one call:
+   - **Worker permissions**, two options; the user may type their own arguments via "Other" (split on whitespace into an array; empty input means `[]`):
+     - `--enable-auto-mode` — a classifier asks for approval only on risky actions
+     - `--dangerously-skip-permissions` — runs to the end without approvals. Trusted repositories only
+   - **Hook** (see Hooks below): "on" (recommended, the default), "off" (installed but silent), or "don't install". Say what it does in the option descriptions: inside herdr it stops Claude from creating a worktree some other way and sends it to this skill; it costs nothing until then and does nothing outside herdr.
+   After the answers, `mkdir -p "$DATA_DIR"`, save `{"workerArgs": [...]}`, apply the hooks choice with `scripts/hooks/manage.py` (`on`, `off` or `remove`; it also writes `hooks` to the config), and tell the user the saved path in one line. Then add one more line: "Worker briefs use the default template. To lock in your own steps and rules, say 'change the brief template'." Without this line the user has no way of knowing the template can be changed.
 3. **Change**: if the user asks to change the default (e.g. "change worker permissions"), ask the same question again and overwrite. If they want different arguments **for this run only**, leave the file alone.
 
 ```bash
 CONFIG="${HERDR_SKILLS_DATA_HOME:-$HOME/.local/share/herdr-skills}/herdr-parallel-worktree/config.json"
-jq -e '(keys == ["workerArgs"]) and (.workerArgs | type == "array" and all(type == "string"))' "$CONFIG"   # initialize on failure
+jq -e '(keys - ["workerArgs", "hooks"] == []) and (.workerArgs | type == "array" and all(type == "string")) and ((.hooks // "on") | IN("on", "off"))' "$CONFIG"   # initialize on failure
 ```
+
+## Hooks
+
+This skill's description is kept short on purpose: it sits in every session's context, including sessions outside herdr where the skill is useless. Reliability comes from one hook instead, which only acts inside herdr and costs nothing until it fires:
+
+- **PreToolUse**: when Claude is about to create a worktree some other way — `git worktree add`, `EnterWorktree` without `path`, or an `Agent` with worktree isolation — the hook denies it and tells Claude to use this skill. `EnterWorktree` with `path` only enters an existing worktree (for example, to inspect a worker's worktree) and is allowed. It costs nothing until that moment: for Bash, an `if` filter keeps the hook process from even starting on other commands.
+
+Plugin installs ship it in the plugin's `hooks/hooks.json`, active by default. Other installs register it in `~/.claude/settings.json` through `scripts/hooks/manage.py`. When the user asks to turn the hook on or off, remove it, or check it ("turn off the herdr hooks", "훅 꺼줘"), run:
+
+```bash
+python3 "<skill directory>/scripts/hooks/manage.py" <on|off|remove|status> --skill-dir "<skill directory>"
+```
+
+Before `on` or `remove` on a non-plugin install, tell the user it edits `~/.claude/settings.json` (a backup is written first). For plugin installs, `remove` can only silence the hook; removing it entirely means disabling the plugin. If a hook blocks something the user explicitly asked for (a plain `git worktree add`), say so and offer `! <command>` or turning the hooks off.
 
 ## 0. Preconditions
 
@@ -65,9 +82,17 @@ Put the task list together and **get the user's confirmation once**. For each ta
 - Name: `[a-z][a-z0-9_-]{0,31}`, unique. Used as both the sidebar workspace label and the worker name (e.g. `proj-101`)
 - Branch: follow the repository's branch convention (e.g. `feature/PROJ-101`)
 - Base: defaults to `ROOT`'s current `HEAD`
+- Worktree path: follow the repository's convention (below)
 - Brief: pick a template and fill it with the goal, references, steps and rules taken from the user's request (step 2). The worker must be able to finish from the brief alone. Write the briefs (step 2) before asking for confirmation
 
-The user must be able to tell what they are approving from the question screen alone. With AskUserQuestion, put the target repository (`ROOT`) and each task's name, branch, base, worker arguments and the brief's steps section in the option `preview`. This is where the user confirms that every step they asked for made it in. If a brief still contains `[NEEDS CLARIFICATION: …]`, ask about it in the same question. The first line of the `preview` names the template: `Template: default (say "change the brief template" to customize)` for the default, otherwise `Template: <path>`. This line is how the user learns the template can be changed. Labels like "Proceed / Edit" alone hide the content and make the choice impossible to judge.
+**The repository's conventions come first; herdr only builds what they describe.** Where worktrees live, how branches are named and what they are based on belong to the repository, not to the development tool. Look for the repository's own answer before falling back to any default:
+
+- Where worktrees go: a location stated in the repository's docs (`CLAUDE.md`, `AGENTS.md`, `CONTRIBUTING.md`, README), a worktree directory already listed in `.gitignore` (e.g. `.worktrees/`), or where existing worktrees already live (`git -C "$ROOT" worktree list`).
+- How branches are named: the same docs, and the pattern of existing branches (`git -C "$ROOT" branch -a`).
+
+If the user named a path, use it. If the repository has a worktree convention, pass the resulting path to herdr with `--path` (step 1). Only when the repository shows no worktree convention at all, leave `--path` out and let herdr use its default (`~/.herdr/worktrees/<repo>/<branch>`). If the convention puts worktrees inside the repository but that directory is not in `.gitignore`, point it out in the confirmation question rather than editing `.gitignore` yourself.
+
+The user must be able to tell what they are approving from the question screen alone. With AskUserQuestion, put the target repository (`ROOT`) and each task's name, branch, base, worktree path (with the convention it came from, or "herdr default"), worker arguments and the brief's steps section in the option `preview`. This is where the user confirms that every step they asked for made it in. If a brief still contains `[NEEDS CLARIFICATION: …]`, ask about it in the same question. The first line of the `preview` names the template: `Template: default (say "change the brief template" to customize)` for the default, otherwise `Template: <path>`. This line is how the user learns the template can be changed. Labels like "Proceed / Edit" alone hide the content and make the choice impossible to judge.
 
 More tasks means more concurrent claude sessions, which hit usage limits sooner. Confirm before running five or more.
 
@@ -79,14 +104,15 @@ FROM_BRANCH="$(git -C "$ROOT" symbolic-ref --short -q HEAD || echo "$BASE")"   #
 REPO_KEY="$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir)"
 WS_KEY="$(herdr workspace get "$HERDR_WORKSPACE_ID" | jq -r '.result.workspace.worktree.repo_key // empty')"
 if [ "$WS_KEY" = "$REPO_KEY" ]; then LOC=(--workspace "$HERDR_WORKSPACE_ID"); else LOC=(--cwd "$ROOT"); fi
-OUT="$(herdr worktree create "${LOC[@]}" --branch <branch> --base "$BASE" --label <name> --no-focus)"
+PATH_ARG=(--path "<absolute path from the repository's convention>")   # relative conventions resolve against ROOT; PATH_ARG=() when there is none
+OUT="$(herdr worktree create "${LOC[@]}" "${PATH_ARG[@]}" --branch <branch> --base "$BASE" --label <name> --no-focus)"
 WT="$(printf '%s' "$OUT" | jq -r .result.worktree.path)"
 W="$(printf '%s' "$OUT" | jq -r .result.workspace.workspace_id)"
 P="$(printf '%s' "$OUT" | jq -r .result.root_pane.pane_id)"
 ```
 
 - If the current workspace is bound to the `ROOT` repository, attach with `--workspace`; with `--cwd` alone herdr may create a second workspace for the source repository. If it is bound to a different repository, use `--cwd`: passing `--workspace` then makes herdr try to create the worktree in that other repository, which fails with `invalid reference`.
-- herdr picks the worktree path (`~/.herdr/worktrees/<repo>/<branch>`). Read it from the response instead of predicting it.
+- herdr creates missing parent directories for `--path`, inside or outside the repository. Always take `WT` from the response, whichever path was used.
 - If the branch already exists or the command fails, do not overwrite anything. Stop and report.
 - Add `--trust-repository` only when herdr asks for Git trust and the user has checked the repository. Never use it as a retry to get past a failure.
 

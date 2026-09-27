@@ -68,6 +68,14 @@ Always pass `--agent claude-code --scope user` to `gh skill install`; without th
 - [herdr](https://herdr.dev) — the skills only run inside a herdr session (`HERDR_ENV=1`)
 - `claude` (Claude Code), `git`, `jq`, `python3`
 
+## Hooks
+
+`herdr-parallel-worktree` keeps its skill description short, because every Claude Code session carries it — including sessions outside herdr. A `PreToolUse` hook makes it reliable instead. It only acts inside herdr (`HERDR_ENV=1`):
+
+- **PreToolUse** — when Claude is about to create a worktree some other way (`git worktree add`, `EnterWorktree` creating a new one, or a worktree-isolated subagent), the hook stops it and points Claude to the skill. Entering an existing worktree with `EnterWorktree` is allowed. It costs nothing until then.
+
+It is on by default. The plugin ships it in `hooks/hooks.json`; individual installs register it in `~/.claude/settings.json` on first use. The first time the skill runs it asks whether to keep it on, turn it off, or not install it, and you can change that later by asking Claude to "turn off the herdr hook" (or on, or remove).
+
 ## Settings and data
 
 Per-user settings live outside the skill directory, so they survive reinstalls and updates:

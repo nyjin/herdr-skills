@@ -95,6 +95,17 @@ jobs:
           python3 "$s" "$t"
           tail -1 "$t" | grep -q 'Do not push or open a pull request.'
 
+      - name: Hooks smoke test
+        run: |
+          set -euo pipefail
+          jq -e '.hooks.PreToolUse and (.hooks.SessionStart | not)' hooks/hooks.json >/dev/null
+          r=skills/herdr-parallel-worktree/scripts/hooks/route.py
+          ev='{"tool_name":"Bash","tool_input":{"command":"git worktree add ../x -b x"}}'
+          test -z "$(echo "$ev" | env -u HERDR_ENV python3 "$r" pre-tool-use)"          # outside herdr: silent
+          echo "$ev" | HERDR_ENV=1 HERDR_SKILLS_DATA_HOME="$(mktemp -d)" python3 "$r" pre-tool-use | jq -e '.hookSpecificOutput.permissionDecision == "deny"'
+          test -z "$(echo '{"tool_name":"Bash","tool_input":{"command":"git status"}}' | HERDR_ENV=1 python3 "$r" pre-tool-use)"
+          test -z "$(echo '{"tool_name":"Bash","tool_input":{"command":"git commit -m \"explain git worktree add\""}}' | HERDR_ENV=1 python3 "$r" pre-tool-use)"   # quoted phrase: not a command
+
       - name: runs.py smoke test
         run: |
           set -euo pipefail
