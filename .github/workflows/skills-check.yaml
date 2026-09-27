@@ -1,0 +1,93 @@
+name: Skills check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    name: Verify skills repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # gh skill exists from 2.90.0. Download a newer gh into RUNNER_TEMP only when the runner's is older.
+      - name: Ensure gh >= 2.90.0
+        run: |
+          set -euo pipefail
+          need=2.90.0
+          have=$(gh --version 2>/dev/null | head -1 | awk '{print $3}' || echo 0.0.0)
+          echo "runner gh=${have} (need ${need}+)"
+          if [ "$(printf '%s\n%s\n' "$need" "$have" | sort -V | head -1)" = "$need" ]; then exit 0; fi
+          d="${RUNNER_TEMP}/ghcli"; mkdir -p "$d"
+          curl -fsSL "https://github.com/cli/cli/releases/download/v${need}/gh_${need}_linux_amd64.tar.gz" \
+            | tar -xz -C "$d" --strip-components=1
+          echo "$d/bin" >> "$GITHUB_PATH"
+
+      # Diagnostics go to stdout as 'level<TAB>skill<TAB>message'. Only errors with a skill name fail the job.
+      - name: Validate skill spec (gh skill publish --dry-run)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NO_COLOR: "1"
+        run: |
+          set -uo pipefail
+          diag="${RUNNER_TEMP}/skill-diag.tsv"
+          rc=0
+          gh skill publish . --dry-run >"$diag" 2>"${RUNNER_TEMP}/skill-stderr.txt" || rc=$?
+          cat "$diag"
+          lines=$(grep -cE '^(error|warning)\b' "$diag" || true)
+          if [ "$rc" -ne 0 ] && [ "$lines" -eq 0 ]; then
+            echo "::error::gh skill publish --dry-run failed to run (rc=${rc})."
+            cat "${RUNNER_TEMP}/skill-stderr.txt"
+            exit 1
+          fi
+          errors=$(grep -E "^error"$'\t'"[^"$'\t'"]+"$'\t' "$diag" || true)
+          if [ -n "$errors" ]; then
+            while IFS=$'\t' read -r _ skill msg; do
+              echo "::error file=skills/${skill}/SKILL.md::${skill}: ${msg}"
+            done <<< "$errors"
+            exit 1
+          fi
+
+      # gh skill silently skips skills whose name breaks the naming rule, so check it directly.
+      - name: SKILL.md name matches directory
+        run: |
+          set -uo pipefail
+          fail=0
+          while IFS= read -r f; do
+            dir=$(basename "$(dirname "$f")")
+            name=$(awk '/^---$/{n++; next} n==1 && /^name:/{sub(/^name:[[:space:]]*/,""); print; exit}' "$f")
+            if [ "$name" != "$dir" ]; then echo "::error file=${f}::name '${name}' != directory '${dir}'"; fail=1; fi
+            if ! printf '%s' "$name" | grep -qE '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'; then
+              echo "::error file=${f}::name '${name}' breaks the agentskills naming rule"; fail=1
+            fi
+          done < <(find skills -mindepth 2 -maxdepth 2 -name SKILL.md | sort)
+          exit "$fail"
+
+      - name: README skills table matches skills/
+        run: |
+          set -uo pipefail
+          table=$(awk '/<!-- skills:start -->/{f=1;next} /<!-- skills:end -->/{if(f)exit} f' README.md \
+            | sed -nE 's/^\| *\[?`([a-z0-9][a-z0-9-]*)`\]?.*/\1/p' | sort)
+          dirs=$(find skills -mindepth 2 -maxdepth 2 -name SKILL.md | cut -d/ -f2 | sort)
+          if [ "$table" != "$dirs" ]; then
+            echo "::error file=README.md::README table ($(echo $table)) != skills/ ($(echo $dirs))"
+            exit 1
+          fi
+
+      - name: Validate plugin manifests
+        run: |
+          set -euo pipefail
+          for f in .claude-plugin/plugin.json .claude-plugin/marketplace.json; do jq -e . "$f" >/dev/null; done
+          test "$(jq -r .name .claude-plugin/plugin.json)" = "$(jq -r '.plugins[0].name' .claude-plugin/marketplace.json)"
+
+      - name: finalize-brief.py smoke test
+        run: |
+          set -euo pipefail
+          s=skills/herdr-parallel-worktree/scripts/finalize-brief.py
+          t=$(mktemp); cp skills/herdr-parallel-worktree/assets/brief-template.md "$t"
+          if python3 "$s" "$t"; then echo "::error::unfilled template should fail"; exit 1; fi
+          printf '# [t] x\n\n## Goal\ndone\n' > "$t"
+          python3 "$s" "$t"
+          tail -1 "$t" | grep -q 'Do not push or open a pull request.'

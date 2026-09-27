@@ -1,0 +1,16 @@
+{
+  "name": "herdr-skills",
+  "owner": {
+    "name": "nyjin"
+  },
+  "metadata": {
+    "description": "Claude Code skills for herdr — see the README for the skill list"
+  },
+  "plugins": [
+    {
+      "name": "herdr-skills",
+      "source": "./",
+      "description": "herdr skills bundle — see the README's Skills table"
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+# skill-creator eval workspaces
+*-workspace/
+
+.DS_Store
+.idea/
