@@ -11,7 +11,7 @@
 <!-- skills:start -->
 | 스킬 | 설명 |
 |---|---|
-| [`herdr-parallel-worktree`](skills/herdr-parallel-worktree/SKILL.md) | herdr 안에서 여러 작업을 병렬로 진행합니다. 작업마다 git worktree workspace와 눈에 보이는 `claude` 작업자를 하나씩 띄워, 사이드바에서 각각의 진행을 볼 수 있습니다. 작업자 지시서는 바꿀 수 있는 템플릿으로 만들고, 작업자 권한 옵션은 처음 쓸 때 묻습니다. 끝난 작업자는 정리했다가 나중에 이름으로 다시 열 수 있으며, 대화 내용도 그대로 이어집니다. |
+| [`herdr-parallel-worktree`](skills/herdr-parallel-worktree/SKILL.md) | herdr 안에서 여러 작업을 병렬로 진행합니다. 작업마다 git worktree workspace와 눈에 보이는 `claude` 작업자를 하나씩 띄워, 사이드바에서 각각의 진행을 볼 수 있습니다. 작업자 지시서는 바꿀 수 있는 템플릿으로 만들고, 설정은 기본값으로 바로 동작하고, 처음 실행할 때 바꿀 수 있는 설정을 안내합니다. 끝난 작업자는 정리했다가 나중에 이름으로 다시 열 수 있으며, 대화 내용도 그대로 이어집니다. |
 <!-- skills:end -->
 
 ## 설치
@@ -70,11 +70,14 @@ npx skills add nyjin/herdr-skills -s herdr-parallel-worktree -a claude-code -g
 
 ## 훅
 
-`herdr-parallel-worktree`는 스킬 설명(description)을 일부러 짧게 둡니다. 설명은 herdr 밖의 세션까지 포함해 모든 Claude Code 세션에 들어가기 때문입니다. 대신 `PreToolUse` 훅이 스킬이 제때 쓰이게 하고, 이 훅은 herdr 안(`HERDR_ENV=1`)에서만 동작합니다.
+`herdr-parallel-worktree`는 스킬 설명(description)을 일부러 짧게 둡니다. 설명은 herdr 밖의 세션까지 포함해 모든 Claude Code 세션에 들어가기 때문입니다. 대신 훅이 스킬이 제때 쓰이게 하고, 이 훅들은 herdr 안(`HERDR_ENV=1`)에서만 동작합니다.
 
-- **PreToolUse**: Claude가 다른 방법으로 worktree를 만들려는 순간(`git worktree add`, `EnterWorktree`로 새로 만들기, worktree 격리 서브에이전트) 이를 멈추고 이 스킬을 쓰게 합니다. `EnterWorktree`로 이미 있는 worktree에 들어가는 것은 막지 않습니다. 그 순간 전까지는 비용이 없습니다.
+- **PreToolUse**: 스킬 밖에서 worktree를 만들려 하면(`git worktree add`, `EnterWorktree`로 새로 만들기, worktree 격리 서브에이전트) 막습니다. 안내는 누가 시도했느냐에 따라 다릅니다. 메인 세션은 스킬로 안내되고, 서브에이전트는 멈춰서 작업을 되돌려 줍니다(`HERDR-HANDOFF` 블록. 메인 세션이 한 번 확인을 받은 뒤 워커로 띄웁니다). 스킬이 띄운 워커는 직접 작업하라는 안내를 받습니다. 서브에이전트가 다른 워커의 worktree에 쓰려 해도 같은 방식으로 멈춥니다. `EnterWorktree`로 이미 있는 worktree에 들어가는 것은 막지 않습니다.
+- **PostToolUse**: 메인 세션이 서브에이전트를 띄우면, 그 서브에이전트가 `HERDR-HANDOFF` 블록을 돌려줄 때 어떻게 할지 한 줄로 알려 줍니다.
 
-기본으로 켜져 있습니다. 플러그인은 `hooks/hooks.json`에 이 훅을 담고 있고, 스킬만 따로 설치하면 처음 쓸 때 `~/.claude/settings.json`에 등록합니다. 스킬을 처음 실행할 때 켜 둘지, 끌지, 아예 설치하지 않을지 묻고, 나중에도 Claude에게 "herdr 훅 꺼줘"(또는 켜줘, 지워줘)라고 하면 바꿀 수 있습니다.
+훅은 프롬프트 문구가 아니라 도구 호출 자체를 보고 판단합니다. herdr 밖에서는 python을 띄우기 전에 끝납니다.
+
+플러그인은 `hooks/hooks.json`에 이 훅을 담고 있어 기본으로 켜져 있습니다. 스킬만 따로 설치하면 `~/.claude/settings.json`을 고쳐야 하므로, Claude에게 "herdr 훅 켜줘"라고 하기 전에는 등록하지 않습니다(고치기 전에 백업을 남깁니다). 어느 쪽이든 나중에 "herdr 훅 꺼줘"(또는 켜줘, 지워줘)라고 하면 바꿀 수 있습니다.
 
 ## 설정과 데이터
 
@@ -84,7 +87,7 @@ npx skills add nyjin/herdr-skills -s herdr-parallel-worktree -a claude-code -g
 ${HERDR_SKILLS_DATA_HOME:-~/.local/share/herdr-skills}/<skill>/
 ```
 
-`herdr-parallel-worktree`는 이곳에 `config.json`(작업자 `claude` 옵션), `briefs/`(만들어진 작업자 지시서), `runs.json`(띄운 작업자와 그 Claude 세션 ID를 기록하며, 정리와 재개에 쓰임), 그리고 선택적으로 `brief-template.md`(내 지시서 템플릿)를 둡니다. 템플릿을 바꾸려면 Claude에게 "지시서 템플릿 바꿔줘"라고 하세요.
+`herdr-parallel-worktree`는 이곳에 `config.json`(작업자 `claude` 옵션과 훅 스위치. 처음 실행할 때 기본값으로 만들어지며, 직접 고치거나 Claude에게 바꿔 달라고 하면 됩니다), `briefs/`(만들어진 작업자 지시서), `runs.json`(띄운 작업자와 그 Claude 세션 ID를 기록하며, 정리와 재개에 쓰임), 그리고 선택적으로 `brief-template.md`(내 지시서 템플릿)를 둡니다. 템플릿을 바꾸려면 Claude에게 "지시서 템플릿 바꿔줘"라고 하세요.
 
 ## 스킬 추가하기
 

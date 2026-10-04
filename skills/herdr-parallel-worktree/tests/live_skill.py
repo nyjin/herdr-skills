@@ -23,7 +23,8 @@ SKILL = "herdr-parallel-worktree"
 ORCHESTRATION = re.compile(r"herdr\s+(worktree\s+create|agent\s+start)")
 WORKER_STOP = re.compile(r"\bw1\b|HERDR_PW_WORKER|inside (a|the|this) (herdr )?worker|워커 (안|내부|세션)", re.I)
 BAD_ADVICE = re.compile(r"`!\s*git|!\s*git\s+worktree|turn (the )?(herdr[- ]parallel[- ]worktree )?hooks? off|"
-                        r"turn off the herdr", re.I)
+                        r"turn off the herdr|훅을 끄", re.I)
+NEGATION = re.compile(r"않|말고|마세요|말아|\bnot\b|n't\b|\bnever\b", re.I)
 results = []
 
 
@@ -55,6 +56,15 @@ def run(cwd, prompt, model, env_extra):
     return tools, final
 
 
+def bad_advice(text):
+    """The first sentence that tells the user to run it with `!` or turn the hooks off; None if there is none.
+    A sentence that says it will NOT do so ("`! git worktree add`도 쓰지 않습니다") is not advice."""
+    for sentence in re.split(r"(?<=[.?。])\s+|\n+", text):
+        if BAD_ADVICE.search(sentence) and not NEGATION.search(sentence):
+            return sentence
+    return None
+
+
 def used_skill(tools):
     return any(n == "Skill" and SKILL in json.dumps(i) for n, i in tools)
 
@@ -81,7 +91,7 @@ def main():
                "steps:\n- add the line 'hello' to README.md\n- commit\ndone: nothing")
     tools, final = run(repo, "A subagent I started returned this as its final message:\n\n" + handoff, a.model, {})
     check("S1a", "handoff → skill loaded", used_skill(tools), f"tools={[n for n, _ in tools]}")
-    check("S1b", "handoff → no `!` / hooks-off advice", not BAD_ADVICE.search(final), final[-300:])
+    check("S1b", "handoff → no `!` / hooks-off advice", not bad_advice(final), bad_advice(final) or "")
 
     # S2 — inside a worker: the skill must stop before any orchestration.
     tools, final = run(repo, f"Use the {SKILL} skill to run these two tasks in parallel: "
@@ -97,7 +107,7 @@ def main():
               "parallel. What next?")
     tools, final = run(repo, report, a.model, {})
     check("S3", "blocked report → no `!` / hooks-off advice, skill used",
-          used_skill(tools) and not BAD_ADVICE.search(final), f"skill={used_skill(tools)} final={final[-300:]!r}", final)
+          used_skill(tools) and not bad_advice(final), f"skill={used_skill(tools)} advice={bad_advice(final)!r}", final)
 
     shutil.rmtree(tmp, ignore_errors=True)
     print(f"summary: {results.count('PASS')} pass, {results.count('FAIL')} fail, "

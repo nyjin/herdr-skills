@@ -9,6 +9,12 @@ description: >-
 
 The main Claude (this session) is the **orchestrator**. For each task it creates a herdr worktree workspace and starts a `claude` worker there. Each workspace appears in the sidebar under the task name with its status (working, idle, …), so the user can switch between tasks and watch them directly. Do not use the built-in `Agent` subagent: its work is invisible to the user.
 
+**First, before anything else — even a clarifying question — check whether this session is a herdr worker.** If `HERDR_PW_WORKER` is set, this session is a herdr worker started by this skill. Workers never start workers or create worktrees: say so and stop. If the work really needs a separate worker, put a `HERDR-HANDOFF` block in your `## Result` and let the orchestrator decide.
+
+```bash
+test -z "${HERDR_PW_WORKER:-}" || echo "inside worker $HERDR_PW_WORKER: stop"
+```
+
 Talk to the user in their language. Briefs may also be written in the user's language.
 
 Requires `herdr`, `claude`, `git`, `jq` and `python3` (for the scripts). If one is missing, say which and stop.
@@ -72,12 +78,6 @@ python3 "<skill directory>/scripts/hooks/manage.py" <on|off|remove|status> --ski
 Before `on` or `remove` on a non-plugin install, tell the user it edits `~/.claude/settings.json` (a backup is written first). For plugin installs, `remove` can only silence the hook; removing it entirely means disabling the plugin. Offer `! <command>` or turning the hooks off only when the user, in this conversation, explicitly asked for a plain `git worktree add` or a subagent. A plan that came from you or from a subagent is not such a request: when a subagent reports that it was blocked or returns a `HERDR-HANDOFF` block, take it over with this skill (step 0, "Receiving a handoff").
 
 ## 0. Preconditions
-
-**Inside a worker, stop.** If `HERDR_PW_WORKER` is set, this session is a herdr worker started by this skill. Workers never start workers or create worktrees: say so and stop. If the work really needs a separate worker, put a `HERDR-HANDOFF` block in your `## Result` and let the orchestrator decide.
-
-```bash
-test -z "${HERDR_PW_WORKER:-}" || echo "inside worker $HERDR_PW_WORKER: stop"
-```
 
 ```bash
 test "${HERDR_ENV:-}" = 1 && ROOT="$(git -C "<target path>" rev-parse --show-toplevel)" && echo "$ROOT"

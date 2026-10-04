@@ -11,7 +11,7 @@ To install one skill, put its name from the table below in `<skill>`.
 <!-- skills:start -->
 | Skill | Description |
 |---|---|
-| [`herdr-parallel-worktree`](skills/herdr-parallel-worktree/SKILL.md) | Runs several tasks in parallel inside herdr, one git worktree workspace and one visible `claude` worker per task, so you can watch each from the sidebar. Workers get a brief built from a customizable template; worker permission flags are asked on first use. Finished workers can be cleaned up and resumed later by name, conversation included. |
+| [`herdr-parallel-worktree`](skills/herdr-parallel-worktree/SKILL.md) | Runs several tasks in parallel inside herdr, one git worktree workspace and one visible `claude` worker per task, so you can watch each from the sidebar. Workers get a brief built from a customizable template; it runs on sensible defaults and the first run lists the settings you can change. Finished workers can be cleaned up and resumed later by name, conversation included. |
 <!-- skills:end -->
 
 ## Install
@@ -70,11 +70,14 @@ Always pass `--agent claude-code --scope user` to `gh skill install`; without th
 
 ## Hooks
 
-`herdr-parallel-worktree` keeps its skill description short, because every Claude Code session carries it — including sessions outside herdr. A `PreToolUse` hook makes it reliable instead. It only acts inside herdr (`HERDR_ENV=1`):
+`herdr-parallel-worktree` keeps its skill description short, because every Claude Code session carries it — including sessions outside herdr. Hooks make it reliable instead. They only act inside herdr (`HERDR_ENV=1`):
 
-- **PreToolUse** — when Claude is about to create a worktree some other way (`git worktree add`, `EnterWorktree` creating a new one, or a worktree-isolated subagent), the hook stops it and points Claude to the skill. Entering an existing worktree with `EnterWorktree` is allowed. It costs nothing until then.
+- **PreToolUse** — creating a worktree outside the skill (`git worktree add`, `EnterWorktree` creating a new one, or a worktree-isolated subagent) is denied, with an answer that depends on who tried: the main session is sent to the skill, a subagent is told to stop and hand the task back (a `HERDR-HANDOFF` block the main session turns into a worker after asking you once), and a worker started by the skill is told to do the work itself. A subagent writing into another worker's worktree is stopped the same way. Entering an existing worktree with `EnterWorktree` is allowed.
+- **PostToolUse** — when the main session starts a subagent, one line tells it what to do if that subagent comes back with a `HERDR-HANDOFF` block.
 
-It is on by default. The plugin ships it in `hooks/hooks.json`; individual installs register it in `~/.claude/settings.json` on first use. The first time the skill runs it asks whether to keep it on, turn it off, or not install it, and you can change that later by asking Claude to "turn off the herdr hook" (or on, or remove).
+The hooks judge the tool call itself, never the wording of a prompt. Outside herdr they return before python starts.
+
+The plugin ships it in `hooks/hooks.json`, on by default. Individual installs leave it off until you ask Claude to "turn on the herdr hook", since that registers it in `~/.claude/settings.json` (a backup is written first). Either way you can later ask Claude to turn it off, on, or remove it.
 
 ## Settings and data
 
@@ -84,7 +87,7 @@ Per-user settings live outside the skill directory, so they survive reinstalls a
 ${HERDR_SKILLS_DATA_HOME:-~/.local/share/herdr-skills}/<skill>/
 ```
 
-`herdr-parallel-worktree` keeps `config.json` (worker `claude` flags), `briefs/` (generated worker briefs), `runs.json` (started workers and their Claude session IDs, used for cleanup and resume) and an optional `brief-template.md` (your own brief template) there. Ask Claude to "change the brief template" to customize it.
+`herdr-parallel-worktree` keeps `config.json` (worker `claude` flags and the hook switch; written with defaults on the first run, and you can edit it or ask Claude to change it), `briefs/` (generated worker briefs), `runs.json` (started workers and their Claude session IDs, used for cleanup and resume) and an optional `brief-template.md` (your own brief template) there. Ask Claude to "change the brief template" to customize it.
 
 ## Adding a skill
 
