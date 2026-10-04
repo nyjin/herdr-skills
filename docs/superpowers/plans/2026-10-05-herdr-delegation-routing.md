@@ -21,6 +21,7 @@
 - `hooks/hooks.json` and `manage.py hook_entries()` must register the same set (enforced by a test).
 - Five files were already modified in the working tree before this work (`.claude-plugin/plugin.json`, `README.ko.md`, `README.md`, `skills/herdr-parallel-worktree/SKILL.md`, `skills/herdr-parallel-worktree/references/config.schema.json`). They are the user's. Before the first task that edits one of them (Task 5), stop and ask the user to commit them or say how to handle them. Never `git add` them as part of another commit without that answer.
 - Never commit, push or open a PR beyond the per-task commits listed here. Work on branch `design/delegation-routing`.
+- Test files: `tests/test_*.py` are unit tests (L1, run by `unittest discover`, no network, no claude). `tests/live_*.py` and `tests/hook_cost.py` are run by hand (L2/L3/cost); their names keep them out of `discover`.
 
 ## Review Focus
 
@@ -30,11 +31,51 @@
 4. "cd" or "git -C" appearing inside a quoted argument such as a commit message — must not be treated as a command (Task 2, `test_cd_inside_commit_message_ignored`).
 5. git hanging (slow or network filesystem) — must time out and allow, never block the user (Task 2, `test_git_timeout_allows`).
 
+
+## Verification Model
+
+Four layers. A requirement counts as verified only at the layer named for it in the traceability table; a lower layer passing is not evidence for a higher one.
+
+| Layer | What it proves | How | Cost | When |
+|---|---|---|---|---|
+| L1 unit | `decide()` returns the right outcome for every rule × caller, git probing and parsing edge cases, process entry point, registration parity | `python3 -m unittest discover -s skills/herdr-parallel-worktree/tests -v` | seconds, no network | every task from 1 on, before each commit |
+| L2 live hooks | The real Claude Code sends the fields we rely on (`agent_id`, `cwd`, `tool_input`), the registered matchers and `if` filters fire, denies reach the model, the subagent actually returns a filled handoff, the main session actually receives the note | `python3 skills/herdr-parallel-worktree/tests/live_hooks.py` (4 × `claude -p`, HERDR_ENV faked, Skill disallowed, no herdr) | ~3 min, model calls | Task 4, Task 6 |
+| L2c cost | Spec §6: outside herdr no python, inside herdr cheap | `python3 skills/herdr-parallel-worktree/tests/hook_cost.py` | seconds | Task 4 |
+| L3 skill behaviour | With the edited SKILL.md, the main session takes a handoff over with the skill, does not advise `!` / hooks off, and a worker refuses to orchestrate | `python3 skills/herdr-parallel-worktree/tests/live_skill.py` (3 scenarios × `claude -p`, only `test`/`printenv`/`echo` Bash allowed, so no herdr command can run) | ~3 min, model calls | Task 5 (before and after the edits), Task 6 |
+| L4 herdr E2E | The whole flow in a real herdr: handoff → one confirmation → visible worker with `HERDR_PW_WORKER` → nested creation refused | Task 7, by hand with the user | ~15 min, user present | Task 7 |
+
+Rules:
+- **Red before green.** Every L1 test is run and seen failing before the code that makes it pass. L3 is run once before the SKILL.md edits; S2 and S3 must not PASS there (the old skill has no worker guard and still advises `!` — that is the W3 reproduction). A check that already passes before the change proves nothing about the change.
+- **INCONCLUSIVE is not PASS.** L2/L3 print INCONCLUSIVE when the model never attempted the action under test (or hit `--max-turns`). Rerun once; if it stays INCONCLUSIVE, report it as unverified, with the output.
+- **Model-behaviour checks get one rerun.** A FAIL in L2 C4 or in L3 is rerun once. Two FAILs in a row are a real failure: report it, do not loosen the check.
+- **Evidence.** Each task's report includes the exact commands run and the summary lines they printed (`Ran N tests … OK`, `summary: N pass, 0 fail, 0 inconclusive`, cost lines). Task 0 and Task 7 record their results in the spec §11 table / the final report.
+- **Pre-measured.** The L1 code, `live_hooks.py`, `live_skill.py` and `hook_cost.py` in this plan were assembled and run against a scratch copy while writing it (L1: 38 tests OK; L2: 11 pass; L3 against the unedited skill: S1a/S1b pass, S2/S3 not passing as expected; cost: 7.7 / 41 / 56 ms). Differences from those results on the real branch are findings, not noise.
+
+### Traceability
+
+| Spec requirement | Verified by |
+|---|---|
+| §1-1 subagent stopped, returns HERDR-HANDOFF | L1 `CreationTest.test_sub_is_told_to_hand_off`, `WriteRuleTest`, `SpecMatrixTest`; L2 C1, C2, C4, C5; L4 Task 7 expectations 1–2 |
+| §1-2 main takes the handoff over, no `!` / hooks-off advice | L1 `MessageTest`; L2 C3; L3 S1a, S1b, S3; L4 Task 7 expectation 3 |
+| §1-3 no nested orchestration in a worker | L1 `SpecMatrixTest` (worker column), `test_worker_is_told_to_do_it_itself`; L2 C8, C9; L3 S2; L4 Task 7 expectation 6 |
+| §1-4 zero cost outside herdr | L1 `EntryPointTest.test_silent_outside_herdr`, `RegistrationTest.test_every_command_is_guarded_and_names_its_event`; L2 C10, C11; L2c outside line |
+| §1-5 decisions pinned by unit tests | L1 `SpecMatrixTest.test_every_cell` (24 cells = spec §5.3 table) |
+| §5.2 own worktree / main checkout / outside git / git failure allowed | L1 `OtherWorktreeTest`, `GitProbeTest`, `WriteRuleTest.test_allowed_writes`; L2 C6, C7 |
+| §5.3 R5 Bash target parsing | L1 `DirTargetsTest`; `if` filters by Task 0 V2 |
+| §5.4 message texts | L1 `MessageTest`, `SpecMatrixTest.outcome` (exact text equality) |
+| §5.5 skill text: worker stop, handoff receipt, export, W4, Never | L3 S1–S3; Task 5 Step 7 greps; L4 Task 7 |
+| §5.6 plugin and standalone register the same hooks | L1 `RegistrationTest.test_same_set`, `test_manage_marker_still_finds_every_group` |
+| §6 cost | L2c `hook_cost.py` |
+| §9 V1–V4 | Task 0, results in spec §11 |
+| `hooks: off`, bad input, unknown argument → silent | L1 `EntryPointTest` |
+
 ---
 
 ### Task 0: Measure V1–V4 before coding
 
 No code changes. Results go into the spec as a new section and decide two details used later (Task 4's `if` patterns, Task 5's W4 text). If V1 fails, stop and report to the user: the worker marker design must change before anything else.
+
+**Done when:** spec §11 has a filled row for V1–V4 (no `<…>` left), V1's decision row is stated, and the spec commit exists. If V1 chose anything but export, the plan stops here.
 
 **Files:**
 - Modify: `docs/superpowers/specs/2026-10-04-herdr-delegation-routing-design.md` (append `## 11. 실측 결과`)
@@ -173,6 +214,12 @@ git commit -m "docs: record pre-implementation measurements for delegation routi
 ---
 
 ### Task 1: Caller-aware creation rules (R1–R3) in `route.py`
+
+**Done when:**
+- Step 2 showed the new tests failing for the missing names (record the error line).
+- `unittest discover` ends with `OK`; `ActorTest`, `CreationTest`, `MessageTest` all ran.
+- `git diff --stat` touches only `route.py` and `tests/test_route.py`.
+- Existing behaviour kept: `CreationTest.test_allowed_creation_lookalikes` passes (commit-message and grep look-alikes, `EnterWorktree` with `path`).
 
 **Files:**
 - Modify: `skills/herdr-parallel-worktree/scripts/hooks/route.py` (whole file rewritten below)
@@ -504,6 +551,11 @@ git commit -m "feat: tell main, subagent and worker apart when blocking worktree
 
 ### Task 2: Block subagent writes into another worktree (R4, R5)
 
+**Done when:**
+- Step 2 showed `OtherWorktreeTest`, `DirTargetsTest`, `WriteRuleTest`, `GitProbeTest` failing.
+- `unittest discover` ends with `OK`, and `GitProbeTest` ran against a real linked worktree (not skipped).
+- Every Review Focus item 1–5 has its named test passing.
+
 **Files:**
 - Modify: `skills/herdr-parallel-worktree/scripts/hooks/route.py` (imports, `git_probe`, new helpers, `decide`)
 - Modify: `skills/herdr-parallel-worktree/tests/test_route.py` (append classes)
@@ -759,6 +811,11 @@ git commit -m "feat: stop subagents from writing into another worktree and hand 
 
 ### Task 3: PostToolUse note and the process entry point (R6)
 
+**Done when:**
+- `SpecMatrixTest.test_every_cell` passes all 24 subtests, and its `TABLE` matches the spec §5.3 table row by row (a mismatch means one of them is wrong — stop and ask which).
+- `EntryPointTest` passes: the real `route.py` process is silent outside herdr, with `hooks: off`, on bad input and on an unknown argument, and always exits 0.
+- `unittest discover` ends with `OK`.
+
 **Files:**
 - Modify: `skills/herdr-parallel-worktree/scripts/hooks/route.py` (`decide`)
 - Modify: `skills/herdr-parallel-worktree/tests/test_route.py` (append classes)
@@ -840,12 +897,52 @@ class EntryPointTest(unittest.TestCase):
         payload = _json.dumps(event("Agent", hook="PostToolUse", prompt="x"))
         out = self.run_route("post-tool-use", payload, {"HERDR_ENV": "1"}, self.data)
         self.assertEqual(_json.loads(out)["hookSpecificOutput"]["additionalContext"], route.NOTE_HANDOFF)
+
+
+class SpecMatrixTest(unittest.TestCase):
+    """Spec §5.3, cell by cell: every rule R1–R6 for every caller. Keep this table identical to the spec's."""
+    RULES = {
+        "R1": lambda sub, cwd: event("Bash", sub=sub, cwd=cwd, command="git worktree add ../x -b x"),
+        "R2": lambda sub, cwd: event("EnterWorktree", sub=sub, cwd=cwd),
+        "R3": lambda sub, cwd: event("Agent", sub=sub, cwd=cwd, prompt="p", isolation="worktree"),
+        "R4": lambda sub, cwd: event("Write", sub=sub, cwd=cwd, file_path="/w/b/f.py"),
+        "R5": lambda sub, cwd: event("Bash", sub=sub, cwd=cwd, command="cd /w/b && make"),
+        "R6": lambda sub, cwd: event("Agent", sub=sub, cwd=cwd, hook="PostToolUse", prompt="p"),
+    }
+    ACTORS = {"main": (False, "/r", MAIN_ENV), "sub": (True, "/r", MAIN_ENV),
+              "worker": (False, "/w/a", WORKER_ENV), "worker-sub": (True, "/w/a", WORKER_ENV)}
+    #          main     sub    worker    worker-sub
+    TABLE = {
+        "R1": ("MAIN", "SUB", "WORKER", "SUB"),
+        "R2": ("MAIN", "SUB", "WORKER", "SUB"),
+        "R3": ("MAIN", "SUB", "WORKER", "SUB"),
+        "R4": (None, "SUB", None, "SUB"),
+        "R5": (None, "SUB", None, "SUB"),
+        "R6": ("NOTE", None, None, None),
+    }
+
+    @staticmethod
+    def outcome(out):
+        if out is None:
+            return None
+        hso = out["hookSpecificOutput"]
+        if hso.get("additionalContext") == route.NOTE_HANDOFF:
+            return "NOTE"
+        return {route.DENY_MAIN: "MAIN", route.DENY_SUB: "SUB",
+                route.deny_worker("w1", "/w/a"): "WORKER"}.get(hso.get("permissionDecisionReason"), "OTHER")
+
+    def test_every_cell(self):
+        for rule, expected in self.TABLE.items():
+            for (who, (sub, cwd, env)), want in zip(self.ACTORS.items(), expected):
+                with self.subTest(rule=rule, caller=who):
+                    got = self.outcome(route.decide(self.RULES[rule](sub, cwd), env, fake_probe))
+                    self.assertEqual(got, want)
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `python3 -m unittest discover -s skills/herdr-parallel-worktree/tests -v`
-Expected: `PostToolUseTest.test_main_gets_the_note` and `EntryPointTest.test_post_tool_use_note` FAIL (no output for PostToolUse). `test_silent_on_bad_input_or_argument` with `"[]"` may already pass because `main()` catches the `AttributeError`; keep it as a regression guard.
+Expected: `PostToolUseTest.test_main_gets_the_note`, `EntryPointTest.test_post_tool_use_note` and the `R6/main` subtest of `SpecMatrixTest.test_every_cell` FAIL (no output for PostToolUse); every other `SpecMatrixTest` cell already passes. `test_silent_on_bad_input_or_argument` with `"[]"` may already pass because `main()` catches the `AttributeError`; keep it as a regression guard.
 
 - [ ] **Step 3: Implement**
 
@@ -883,10 +980,18 @@ git commit -m "feat: tell the main session how to take over a subagent's handoff
 
 ### Task 4: Register the hooks (plugin and standalone) with a shell guard
 
+**Done when:**
+- `RegistrationTest` passes (plugin and standalone sets identical, every command guarded, `strip_ours` finds every group).
+- The guard check in Step 4 prints `outside exit=0` with no output, then a deny JSON and `inside exit=0`.
+- `hook_cost.py` prints three PASS lines (Step 6).
+- `live_hooks.py` ends with `summary: 11 pass, 0 fail, 0 inconclusive` (Step 7), after at most one rerun.
+
 **Files:**
 - Modify: `hooks/hooks.json` (whole file)
 - Modify: `skills/herdr-parallel-worktree/scripts/hooks/manage.py` (`hook_entries`, module docstring line 1)
 - Create: `skills/herdr-parallel-worktree/tests/test_registration.py`
+- Create: `skills/herdr-parallel-worktree/tests/hook_cost.py` (L2c)
+- Create: `skills/herdr-parallel-worktree/tests/live_hooks.py` (L2)
 
 **Interfaces:**
 - Consumes: `route.py` arguments `pre-tool-use` / `post-tool-use` (Tasks 1, 3); Task 0 V2 result for the `if` patterns
@@ -1105,10 +1210,247 @@ echo '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command"
 
 Expected: `outside exit=0` with no output; then a deny JSON and `inside exit=0`.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: L2c — measure the hook cost**
+
+Create `skills/herdr-parallel-worktree/tests/hook_cost.py`:
+
+```python
+#!/usr/bin/env python3
+"""Measure the routing hook's cost per call (verification of spec §6). Usage (repo root):
+python3 skills/herdr-parallel-worktree/tests/hook_cost.py"""
+import json, os, statistics, subprocess, sys, tempfile, time
+
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+with open(os.path.join(ROOT, "hooks", "hooks.json")) as f:
+    hooks = json.load(f)["hooks"]
+write_cmd = next(g for g in hooks["PreToolUse"] if g["matcher"].startswith("Write"))["hooks"][0]["command"]
+write_cmd = write_cmd.replace("${CLAUDE_PLUGIN_ROOT}", ROOT)
+
+tmp = os.path.realpath(tempfile.mkdtemp())
+repo, wt = os.path.join(tmp, "repo"), os.path.join(tmp, "wt")
+g = ["git", "-c", "user.email=t@example.com", "-c", "user.name=t"]
+subprocess.run(["git", "init", "-q", repo], check=True)
+subprocess.run(g + ["-C", repo, "commit", "-q", "--allow-empty", "-m", "i"], check=True)
+subprocess.run(["git", "-C", repo, "worktree", "add", "-q", wt, "-b", "p"], check=True)
+base = {k: v for k, v in os.environ.items() if k not in ("HERDR_ENV", "HERDR_PW_WORKER")}
+base["HERDR_SKILLS_DATA_HOME"] = os.path.join(tmp, "data")
+
+
+def ms(event, env, n=20):
+    payload = json.dumps(event)
+    times = []
+    for _ in range(n):
+        t = time.perf_counter()
+        subprocess.run(["sh", "-c", write_cmd], input=payload, capture_output=True, text=True, env=env)
+        times.append((time.perf_counter() - t) * 1000)
+    return statistics.median(times)
+
+
+main_ev = {"hook_event_name": "PreToolUse", "tool_name": "Write", "cwd": repo,
+           "tool_input": {"file_path": os.path.join(wt, "f")}}
+sub_ev = dict(main_ev, agent_id="a1", agent_type="general-purpose")
+rows = [("outside herdr (guard only)", ms(sub_ev, base), 30),
+        ("inside herdr, main session", ms(main_ev, dict(base, HERDR_ENV="1")), 200),
+        ("inside herdr, subagent (python + 2 git)", ms(sub_ev, dict(base, HERDR_ENV="1")), 300)]
+subprocess.run(["rm", "-rf", tmp])
+bad = False
+for name, v, limit in rows:
+    ok = v <= limit
+    bad |= not ok
+    print(f"{'PASS' if ok else 'FAIL':5} {name}: median {v:.1f} ms (limit {limit} ms)")
+sys.exit(1 if bad else 0)
+```
+
+Run: `python3 skills/herdr-parallel-worktree/tests/hook_cost.py`
+Expected: three `PASS` lines. Medians measured while writing this plan: 7.7 / 41 / 56 ms. A FAIL on the outside line means the guard is missing or broken; on the inside lines, report the numbers.
+
+- [ ] **Step 7: L2 — live hooks with a real Claude Code**
+
+Create `skills/herdr-parallel-worktree/tests/live_hooks.py`:
+
+```python
+#!/usr/bin/env python3
+"""Live check of the routing hooks with a real Claude Code (verification layer L2).
+
+Builds a throwaway repository with one linked worktree, registers this skill's hooks through `--settings`
+(generated by manage.hook_entries, each command teed into a log so every decision is recorded), and runs
+`claude -p` four times. HERDR_ENV=1 is faked for the claude process only, and the Skill tool is disallowed,
+so nothing reaches a real herdr. Prints PASS / FAIL / INCONCLUSIVE per check; exits 1 on any FAIL.
+INCONCLUSIVE means the model never attempted the action under test: rerun once before treating it as a FAIL.
+
+Usage (repo root): python3 skills/herdr-parallel-worktree/tests/live_hooks.py [--model sonnet] [--keep]
+"""
+import argparse
+import importlib.util
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+SKILL_DIR = os.path.dirname(HERE)
+
+
+def load(name):
+    spec = importlib.util.spec_from_file_location(name, os.path.join(SKILL_DIR, "scripts", "hooks", f"{name}.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+route, manage = load("route"), load("manage")
+results = []
+
+
+def check(cid, desc, status, detail=""):
+    results.append(status)
+    print(f"{status:12} {cid} {desc}" + (f"  — {detail}" if detail and status != "PASS" else ""))
+
+
+def git(*args):
+    subprocess.run(["git", "-c", "user.email=t@example.com", "-c", "user.name=t", *args],
+                   check=True, capture_output=True)
+
+
+def write_settings(path, log):
+    entries = manage.hook_entries(SKILL_DIR)
+    for groups in entries.values():
+        for g in groups:
+            for h in g["hooks"]:
+                h["command"] += f' | tee -a "{log}"'
+    with open(path, "w") as f:
+        json.dump({"hooks": entries}, f)
+
+
+def claude(cwd, prompt, settings, model, env_extra):
+    env = {k: v for k, v in os.environ.items() if k not in ("HERDR_ENV", "HERDR_PW_WORKER")}
+    env.update(env_extra)
+    r = subprocess.run(["claude", "-p", "--settings", settings, "--permission-mode", "bypassPermissions",
+                        "--model", model, "--disallowedTools=Skill", prompt],   # =: the option takes many values
+                       cwd=cwd, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=900)
+    if r.returncode != 0 or not r.stdout.strip():
+        print(f"  claude exit={r.returncode} stderr={r.stderr.strip()[-300:]!r}")
+    return r.stdout
+
+
+def decisions(log):
+    out = []
+    if os.path.exists(log):
+        for line in open(log):
+            line = line.strip()
+            if line:
+                out.append(json.loads(line)["hookSpecificOutput"])
+    return out
+
+
+def denied_with(log, text):
+    return any(d.get("permissionDecisionReason") == text for d in decisions(log))
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--model", default="sonnet")
+    ap.add_argument("--keep", action="store_true", help="keep the temp directory for inspection")
+    a = ap.parse_args()
+
+    tmp = os.path.realpath(tempfile.mkdtemp(prefix="herdr-live-"))
+    repo, wt = os.path.join(tmp, "repo"), os.path.join(tmp, "wt")
+    data = os.path.join(tmp, "data")
+    git("init", "-q", repo)
+    with open(os.path.join(repo, "README.md"), "w") as f:
+        f.write("live\n")
+    git("-C", repo, "add", "README.md")
+    git("-C", repo, "commit", "-q", "-m", "init")
+    git("-C", repo, "worktree", "add", "-q", wt, "-b", "probe")
+    herdr = {"HERDR_ENV": "1", "HERDR_SKILLS_DATA_HOME": data}
+    print(f"temp: {tmp}")
+
+    # Run 1 — a subagent tries to create a worktree: DENY_SUB, a filled handoff, and the main-session note.
+    log1, set1 = os.path.join(tmp, "run1.log"), os.path.join(tmp, "run1.json")
+    write_settings(set1, log1)
+    new_wt = os.path.join(tmp, "new-wt")
+    out1 = claude(repo, (
+        "This is a hook test. Call the Agent tool exactly once (subagent_type general-purpose, description 'fix') "
+        f"with this prompt: 'Run this Bash command exactly: `git -C {repo} worktree add {new_wt} -b fix/live`. "
+        "Then add a line to README.md there and commit.' Wait for it to finish. Then reply with the subagent's "
+        "final message verbatim and nothing else. Do not run any command yourself."), set1, a.model, herdr)
+    attempted = bool(decisions(log1)) or os.path.exists(new_wt)
+    if denied_with(log1, route.DENY_SUB):
+        check("C1", "subagent worktree creation denied with DENY_SUB", "PASS")
+    else:
+        check("C1", "subagent worktree creation denied with DENY_SUB", "FAIL" if attempted else "INCONCLUSIVE",
+              f"decisions={decisions(log1)}")
+    check("C2", "worktree was not created", "FAIL" if os.path.exists(new_wt) else "PASS")
+    notes = [d for d in decisions(log1) if d.get("additionalContext") == route.NOTE_HANDOFF]
+    check("C3", "main session got NOTE_HANDOFF after starting the subagent", "PASS" if notes else "FAIL")
+    filled = "HERDR-HANDOFF" in out1 and "repo:" in out1 and "<absolute path" not in out1
+    check("C4", "subagent returned a filled HERDR-HANDOFF block",
+          "PASS" if filled else ("FAIL" if denied_with(log1, route.DENY_SUB) else "INCONCLUSIVE"),
+          "" if filled else f"reply={out1[-400:]!r}")
+
+    # Run 2 — subagent writes into the linked worktree (denied) and the main checkout (allowed);
+    # the main session writes into the linked worktree (allowed).
+    log2, set2 = os.path.join(tmp, "run2.log"), os.path.join(tmp, "run2.json")
+    write_settings(set2, log2)
+    sub_wt, sub_main, main_wt = (os.path.join(wt, "from-sub.txt"), os.path.join(repo, "from-sub-main.txt"),
+                                 os.path.join(wt, "from-main.txt"))
+    claude(repo, (
+        f"This is a hook test. First use the Write tool yourself to create {main_wt} containing hi. "
+        "Then call the Agent tool exactly once (subagent_type general-purpose, description 'write') with this "
+        f"prompt: 'Use the Write tool to create {sub_main} containing hi. Then use the Write tool to create "
+        f"{sub_wt} containing hi. Report exactly what each tool returned.' Wait for it, then reply done."),
+        set2, a.model, herdr)
+    check("C5", "subagent write into another worktree denied",
+          "PASS" if denied_with(log2, route.DENY_SUB) and not os.path.exists(sub_wt)
+          else "FAIL" if os.path.exists(sub_wt) else "INCONCLUSIVE")
+    check("C6", "subagent write into the main checkout allowed",
+          "PASS" if os.path.exists(sub_main) else "INCONCLUSIVE")
+    check("C7", "main session write into a worktree allowed", "PASS" if os.path.exists(main_wt) else "FAIL")
+
+    # Run 3 — a herdr worker (HERDR_PW_WORKER set, session in its worktree) tries to create a worktree.
+    log3, set3 = os.path.join(tmp, "run3.log"), os.path.join(tmp, "run3.json")
+    write_settings(set3, log3)
+    nested = os.path.join(tmp, "nested")
+    claude(wt, (f"This is a hook test. Run this Bash command exactly: `git -C {wt} worktree add {nested} -b nested`. "
+                "Then reply with the exact error text you got, and do not retry."),
+           set3, a.model, dict(herdr, HERDR_PW_WORKER="w1"))
+    expected = route.deny_worker("w1", route.git_probe(wt)[2])
+    check("C8", "worker worktree creation denied with DENY_WORKER naming w1 and its worktree",
+          "PASS" if denied_with(log3, expected) else ("FAIL" if decisions(log3) or os.path.exists(nested)
+                                                      else "INCONCLUSIVE"), f"decisions={decisions(log3)}")
+    check("C9", "nested worktree was not created", "FAIL" if os.path.exists(nested) else "PASS")
+
+    # Run 4 — outside herdr: the hooks must stay silent and the command must go through.
+    log4, set4 = os.path.join(tmp, "run4.log"), os.path.join(tmp, "run4.json")
+    write_settings(set4, log4)
+    outside = os.path.join(tmp, "outside")
+    claude(repo, f"This is a hook test. Run this Bash command exactly: `git -C {repo} worktree add {outside} -b outside`. "
+                 "Then reply done.", set4, a.model, {"HERDR_SKILLS_DATA_HOME": data})
+    check("C10", "outside herdr: no hook output", "PASS" if not decisions(log4) else "FAIL", f"{decisions(log4)}")
+    check("C11", "outside herdr: worktree created", "PASS" if os.path.exists(outside) else "INCONCLUSIVE")
+
+    if a.keep:
+        print(f"kept: {tmp}")
+    else:
+        shutil.rmtree(tmp, ignore_errors=True)
+    print(f"summary: {results.count('PASS')} pass, {results.count('FAIL')} fail, "
+          f"{results.count('INCONCLUSIVE')} inconclusive")
+    sys.exit(1 if "FAIL" in results else 0)
+
+
+if __name__ == "__main__":
+    main()
+```
+
+Run: `python3 skills/herdr-parallel-worktree/tests/live_hooks.py`
+Expected: `summary: 11 pass, 0 fail, 0 inconclusive`. The script creates its fixture worktree from Python; the Claude Code hook inspects Bash tool commands only, and `python3 …/live_hooks.py` contains no `worktree add`. Two lessons already paid for while writing it: `--disallowedTools=Skill` must use `=` (the option takes many values and otherwise swallows the prompt), and commands in prompts are wrapped in backticks (a trailing ` .` was once run as part of the command).
+
+- [ ] **Step 8: Commit**
 
 ```bash
-git add hooks/hooks.json skills/herdr-parallel-worktree/scripts/hooks/manage.py skills/herdr-parallel-worktree/tests/test_registration.py
+git add hooks/hooks.json skills/herdr-parallel-worktree/scripts/hooks/manage.py skills/herdr-parallel-worktree/tests/test_registration.py skills/herdr-parallel-worktree/tests/hook_cost.py skills/herdr-parallel-worktree/tests/live_hooks.py
 git commit -m "feat: register write, cd and handoff hooks behind a herdr-only shell guard"
 ```
 
@@ -1116,9 +1458,15 @@ git commit -m "feat: register write, cd and handoff hooks behind a herdr-only sh
 
 ### Task 5: Skill instructions — worker marker, handoff, W4
 
+**Done when:**
+- Step 0 has the user's answer about the pending changes.
+- `live_skill.py` before the edits: S2 and S3 not PASS (recorded). After the edits: `summary: 4 pass, 0 fail, 0 inconclusive` (S1a, S1b, S2, S3), after at most one rerun.
+- Step 7 greps show every expected location; `unittest discover` still `OK`.
+
 **Files:**
 - Modify: `skills/herdr-parallel-worktree/SKILL.md` (Hooks section, §0, §3, Never)
 - Modify: `skills/herdr-parallel-worktree/references/resume.md:54`
+- Create: `skills/herdr-parallel-worktree/tests/live_skill.py` (L3)
 
 **Interfaces:**
 - Consumes: `HERDR_PW_WORKER` (read by `route.actor`), the `HERDR-HANDOFF` block format (`route.HANDOFF`), Task 0 V4 result
@@ -1127,6 +1475,125 @@ git commit -m "feat: register write, cd and handoff hooks behind a herdr-only sh
 - [ ] **Step 0: Resolve the user's pending changes**
 
 `SKILL.md` has uncommitted edits made before this plan. Stop and ask the user: commit them first (their message), or include them in this task's commit. Do not continue until they answer.
+
+- [ ] **Step 0b: L3 red run — the unedited skill must not pass S2 and S3**
+
+The installed skill is a symlink to this working tree, so `claude -p` uses whatever SKILL.md is on disk. Create `skills/herdr-parallel-worktree/tests/live_skill.py`:
+
+```python
+#!/usr/bin/env python3
+"""Live check of how the main session follows the skill's instructions (verification layer L3).
+
+Runs `claude -p` with the installed herdr-parallel-worktree skill in a throwaway git repository, with
+HERDR_ENV=1 faked for that process. Permissions stay in default mode with only Skill, Read and `test`,
+`printenv`, `echo` Bash commands allowed, so every herdr or git command the model tries is refused automatically and nothing
+reaches a real herdr; the check looks at what the model tried, not at what ran. Prints PASS / FAIL / INCONCLUSIVE per
+scenario (INCONCLUSIVE: the run hit --max-turns with no final reply); exits 1 on any FAIL. Model behaviour
+varies: rerun a FAIL or INCONCLUSIVE once before acting on it.
+
+Usage (repo root): python3 skills/herdr-parallel-worktree/tests/live_skill.py [--model sonnet]
+"""
+import argparse
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+
+SKILL = "herdr-parallel-worktree"
+ORCHESTRATION = re.compile(r"herdr\s+(worktree\s+create|agent\s+start)")
+WORKER_STOP = re.compile(r"\bw1\b|HERDR_PW_WORKER|inside (a|the|this) (herdr )?worker|워커 (안|내부|세션)", re.I)
+BAD_ADVICE = re.compile(r"`!\s*git|!\s*git\s+worktree|turn (the )?(herdr[- ]parallel[- ]worktree )?hooks? off|"
+                        r"turn off the herdr", re.I)
+results = []
+
+
+def check(sid, desc, ok, detail="", final="x"):
+    status = "PASS" if ok else ("INCONCLUSIVE" if not final else "FAIL")   # empty final: hit --max-turns
+    results.append(status)
+    print(f"{status:12} {sid} {desc}" + ("" if ok else f"  — {detail}"))
+
+
+def run(cwd, prompt, model, env_extra):
+    env = {k: v for k, v in os.environ.items() if k not in ("HERDR_ENV", "HERDR_PW_WORKER")}
+    env.update({"HERDR_ENV": "1"}, **env_extra)
+    r = subprocess.run(["claude", "-p", "--output-format", "stream-json", "--verbose", "--max-turns", "12",
+                        "--model", model, "--permission-mode", "default",
+                        "--allowedTools=Skill,Read,Bash(test:*),Bash(printenv:*),Bash(echo:*)", prompt],
+                       cwd=cwd, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=900)
+    tools, final = [], ""
+    for line in r.stdout.splitlines():
+        try:
+            ev = json.loads(line)
+        except ValueError:
+            continue
+        if ev.get("type") == "assistant":
+            for c in ev.get("message", {}).get("content", []):
+                if c.get("type") == "tool_use":
+                    tools.append((c.get("name"), c.get("input") or {}))
+        elif ev.get("type") == "result":
+            final = ev.get("result") or ""
+    return tools, final
+
+
+def used_skill(tools):
+    return any(n == "Skill" and SKILL in json.dumps(i) for n, i in tools)
+
+
+def tried_orchestration(tools):
+    return [i.get("command") for n, i in tools if n == "Bash" and ORCHESTRATION.search(i.get("command") or "")]
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--model", default="sonnet")
+    a = ap.parse_args()
+    tmp = os.path.realpath(tempfile.mkdtemp(prefix="herdr-skill-"))
+    repo = os.path.join(tmp, "repo")
+    subprocess.run(["git", "init", "-q", repo], check=True)
+    subprocess.run(["git", "-C", repo, "-c", "user.email=t@example.com", "-c", "user.name=t",
+                    "commit", "-q", "--allow-empty", "-m", "init"], check=True)
+    print(f"temp: {tmp}")
+
+    # S1 — a subagent's handoff arrives: the main session takes it over with the skill.
+    handoff = (f"HERDR-HANDOFF\nTo the main session: load the {SKILL} skill and turn this into a worker, "
+               "confirming with the user once (step 0). Do not tell the user to run it with `!` or to turn the "
+               f"hooks off.\nname: readme-line\nrepo: {repo}\ngoal: add a line to README.md\nbranch: -\n"
+               "steps:\n- add the line 'hello' to README.md\n- commit\ndone: nothing")
+    tools, final = run(repo, "A subagent I started returned this as its final message:\n\n" + handoff, a.model, {})
+    check("S1a", "handoff → skill loaded", used_skill(tools), f"tools={[n for n, _ in tools]}")
+    check("S1b", "handoff → no `!` / hooks-off advice", not BAD_ADVICE.search(final), final[-300:])
+
+    # S2 — inside a worker: the skill must stop before any orchestration.
+    tools, final = run(repo, f"Use the {SKILL} skill to run these two tasks in parallel: "
+                             "A) add a line to README.md, B) add a LICENSE file.", a.model, {"HERDR_PW_WORKER": "w1"})
+    tried = tried_orchestration(tools)
+    check("S2", "inside a worker → says it is a worker and stops; no `herdr worktree create` / `agent start`",
+          not tried and bool(WORKER_STOP.search(final)), f"tried={tried} final={final[-300:]!r}", final)
+
+    # S3 — a subagent reports the old-style block without a handoff (W3): no `!` / hooks-off advice.
+    report = ("My subagent stopped and reported: 'git worktree add was blocked by a PreToolUse hook: Inside herdr, "
+              "worktree work goes through the herdr-parallel-worktree skill. You can run it yourself with "
+              "`! git worktree add ../fix -b fix/x`, or turn the hooks off.' The user asked for this to run in "
+              "parallel. What next?")
+    tools, final = run(repo, report, a.model, {})
+    check("S3", "blocked report → no `!` / hooks-off advice, skill used",
+          used_skill(tools) and not BAD_ADVICE.search(final), f"skill={used_skill(tools)} final={final[-300:]!r}", final)
+
+    shutil.rmtree(tmp, ignore_errors=True)
+    print(f"summary: {results.count('PASS')} pass, {results.count('FAIL')} fail, "
+          f"{results.count('INCONCLUSIVE')} inconclusive")
+    sys.exit(1 if "FAIL" in results else 0)
+
+
+if __name__ == "__main__":
+    main()
+```
+
+Run: `python3 skills/herdr-parallel-worktree/tests/live_skill.py`
+Expected now (before Steps 1–6): S1a PASS, S1b PASS, **S2 FAIL or INCONCLUSIVE, S3 FAIL** — the old skill has no worker guard and still offers `! git worktree add`. Record the output. If S2 or S3 already PASS, the check cannot tell old from new: stop and report instead of continuing.
 
 - [ ] **Step 1: Hooks section**
 
@@ -1257,20 +1724,25 @@ grep -n "HERDR_PW_WORKER" skills/herdr-parallel-worktree/SKILL.md skills/herdr-p
 grep -n "HERDR-HANDOFF" skills/herdr-parallel-worktree/SKILL.md
 grep -n "explicitly asked for a plain" skills/herdr-parallel-worktree/SKILL.md
 python3 -m unittest discover -s skills/herdr-parallel-worktree/tests -v
+python3 skills/herdr-parallel-worktree/tests/live_skill.py
 ```
 
-Expected: `HERDR_PW_WORKER` appears in the Hooks section, §0, §3 (code and bullet), Never, and `resume.md`; `HERDR-HANDOFF` in Hooks, §0 and Never; the old unconditional "offer `! <command>`" sentence is gone and the new one says "in this conversation"; tests still PASS.
+Expected: `live_skill.py` ends with `summary: 4 pass, 0 fail, 0 inconclusive` (green after the Step 0b red run; one rerun allowed). `HERDR_PW_WORKER` appears in the Hooks section, §0, §3 (code and bullet), Never, and `resume.md`; `HERDR-HANDOFF` in Hooks, §0 and Never; the old unconditional "offer `! <command>`" sentence is gone and the new one says "in this conversation"; tests still PASS.
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add skills/herdr-parallel-worktree/SKILL.md skills/herdr-parallel-worktree/references/resume.md
+git add skills/herdr-parallel-worktree/SKILL.md skills/herdr-parallel-worktree/references/resume.md skills/herdr-parallel-worktree/tests/live_skill.py
 git commit -m "feat: mark workers, take over subagent handoffs, and tolerate a slow wait-output"
 ```
 
 ---
 
 ### Task 6: READMEs and version
+
+**Done when:**
+- Both JSON files validate; `unittest discover` `OK`.
+- `live_hooks.py` and `live_skill.py` both end with 0 fail, 0 inconclusive on the final tree (regression run after the docs and version change).
 
 **Files:**
 - Modify: `README.md`, `README.ko.md` (the hooks paragraph)
@@ -1308,9 +1780,11 @@ In `.claude-plugin/plugin.json`, raise the minor version by one from whatever th
 python3 -m json.tool .claude-plugin/plugin.json > /dev/null && echo plugin.json ok
 python3 -m json.tool hooks/hooks.json > /dev/null && echo hooks.json ok
 python3 -m unittest discover -s skills/herdr-parallel-worktree/tests -v
+python3 skills/herdr-parallel-worktree/tests/live_hooks.py
+python3 skills/herdr-parallel-worktree/tests/live_skill.py
 ```
 
-Expected: both `ok`, tests PASS.
+Expected: both `ok`, unit tests `OK`, and both live scripts `0 fail, 0 inconclusive`.
 
 - [ ] **Step 5: Commit**
 
@@ -1325,6 +1799,8 @@ git commit -m "docs: describe caller-aware routing hooks; bump to 0.6.0"
 
 No code changes unless a step fails. Needs the user present: it starts a real worker and asks for confirmation.
 
+**Done when:** every numbered expectation (1–6) in Steps 2 and 3 is recorded PASS with a one-line observation of what the screen or reply showed. Any FAIL is reported with the transcript excerpt; the plan is not complete until the user decides what to do with it.
+
 - [ ] **Step 1: Make the new hooks active in a fresh session**
 
 Plugin install: run `/plugin` → reload, or start a new Claude Code session. Standalone install: `python3 skills/herdr-parallel-worktree/scripts/hooks/manage.py on --skill-dir ~/.claude/skills/herdr-parallel-worktree` (tell the user it edits `~/.claude/settings.json`; a backup is written), then start a new session inside herdr.
@@ -1335,16 +1811,16 @@ In a new herdr session in a scratch git repository (`git init` + one commit), as
 
 > Use the Agent tool (general-purpose) with this prompt: "Create a separate worktree with `git worktree add ../scratch-fix -b fix/scratch`, add a line to README there, and commit." Do not use any skill yourself.
 
-Expected, in order:
-1. The subagent's `git worktree add` is denied with the DENY_SUB text.
-2. The subagent's final reply ends with a filled `HERDR-HANDOFF` block.
-3. The main session does not suggest `!` or turning hooks off; it loads `herdr-parallel-worktree` and asks one confirmation question listing the handed-off task.
-4. After confirming, a workspace named after the task appears in the herdr sidebar and the worker starts.
+Expected, in order (spec §1 criterion in brackets):
+1. The subagent's `git worktree add` is denied with the DENY_SUB text. [§1-1]
+2. The subagent's final reply ends with a filled `HERDR-HANDOFF` block. [§1-1]
+3. The main session does not suggest `!` or turning hooks off; it loads `herdr-parallel-worktree` and asks one confirmation question listing the handed-off task. [§1-2]
+4. After confirming, a workspace named after the task appears in the herdr sidebar and the worker starts. [goal]
 
 - [ ] **Step 3: Check the worker marker and the nested-orchestration guard**
 
 In the worker's pane, ask the worker: "Run `echo $HERDR_PW_WORKER`, then try `git worktree add ../nested -b nested`."
-Expected: it prints the worker name; the `git worktree add` is denied with the DENY_WORKER text naming that worker.
+Expected: (5) it prints the worker name [V1 in the real flow]; (6) the `git worktree add` is denied with the DENY_WORKER text naming that worker [§1-3].
 
 - [ ] **Step 4: Clean up**
 
