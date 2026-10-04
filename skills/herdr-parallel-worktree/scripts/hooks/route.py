@@ -21,6 +21,7 @@ never blocks the user's work.
 import json
 import os
 import re
+import subprocess
 import sys
 
 SKILL = "herdr-parallel-worktree"
@@ -68,6 +69,12 @@ def deny_worker(name, home):
 # behind VAR=value assignments — not the phrase quoted inside a commit message or a grep pattern.
 WORKTREE_ADD = re.compile(r"(?:^|[;&|(\n]|\$\()\s*(?:\w+=\S*\s+)*(?:command\s+)?git\b(?:\s+-\S+(?:\s+[^-\s]\S*)?)*\s+worktree\s+add\b")
 
+# `git -C <dir>` anywhere, or `cd <dir>` in command position. <dir> must be a plain word or a simply quoted
+# one with no variables or substitutions; anything this cannot read for certain is left alone.
+DIR_ARG = re.compile(r"""(?:\bgit\s+-C|(?:^|[;&|(\n])\s*cd)\s+("[^"$`\\]*"|'[^']*'|[^\s;&|()<>$`'"\\]+)(?=[\s;&|)]|$)""")
+WRITE_TOOLS = {"Write": "file_path", "Edit": "file_path", "MultiEdit": "file_path", "NotebookEdit": "notebook_path"}
+QUOTED = re.compile(r"""("[^"]*"|'[^']*')""")
+
 
 def actor(event, env):
     worker = bool(env.get(WORKER_VAR))
@@ -78,7 +85,52 @@ def actor(event, env):
 
 
 def git_probe(path):
-    return None   # Task 2
+    """(git_dir, git_common_dir, toplevel) of the checkout holding `path`, all absolute; None if unknown."""
+    d = path
+    while not os.path.isdir(d):   # a file, or a directory that does not exist yet
+        parent = os.path.dirname(d)
+        if parent == d:
+            return None
+        d = parent
+    try:
+        r = subprocess.run(["git", "-C", d, "rev-parse", "--path-format=absolute",
+                            "--git-dir", "--git-common-dir", "--show-toplevel"],
+                           capture_output=True, text=True, timeout=2)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    lines = r.stdout.splitlines()
+    if r.returncode != 0 or len(lines) != 3:
+        return None
+    return lines[0], lines[1], lines[2]
+
+
+def other_worktree(path, cwd, probe):
+    """Toplevel of the linked worktree holding `path`, unless it is the session's own (cwd's); else None."""
+    path = os.path.normpath(os.path.join(cwd, os.path.expanduser(path)))
+    found = probe(path)
+    if not found or found[0] == found[1]:   # unknown, or the main checkout
+        return None
+    home = probe(cwd)
+    if home and home[2] == found[2]:
+        return None
+    return found[2]
+
+
+def dir_targets(command):
+    """Directories that `cd <dir>` or `git -C <dir>` in `command` act on, when they can be read for certain."""
+    # Blank out quoted arguments that are not themselves a cd / git -C target, so a commit message or an
+    # echo that mentions "cd …" is not read as a command.
+    out = []
+    for m in DIR_ARG.finditer(command):
+        start = m.start()
+        if any(q.start() < start < q.end() for q in QUOTED.finditer(command)):
+            continue
+        token = m.group(1)
+        if token[:1] in "\"'":
+            token = token[1:-1]
+        if token and token != "-":
+            out.append(os.path.expanduser(token))
+    return out
 
 
 def deny(text):
@@ -111,6 +163,15 @@ def decide(event, env, probe=git_probe):
         if who == "worker":
             return deny(deny_worker(env[WORKER_VAR], home_of(cwd, probe)))
         return deny(DENY_SUB)
+    if who in ("sub", "worker-sub"):
+        if tool in WRITE_TOOLS:
+            targets = [args.get(WRITE_TOOLS[tool]) or ""]
+        elif tool == "Bash":
+            targets = dir_targets(args.get("command") or "")
+        else:
+            targets = []
+        if any(t and other_worktree(t, cwd, probe) for t in targets):
+            return deny(DENY_SUB)
     return None
 
 
