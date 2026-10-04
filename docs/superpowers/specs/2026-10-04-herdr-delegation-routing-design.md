@@ -190,3 +190,16 @@ herdr 안에서 발단 사건을 재현한다. 메인이 worktree 지시를 담�
 - `skills/herdr-parallel-worktree/tests/` — 신규
 - `README.md`, `README.ko.md` — 훅 설명
 - `.claude-plugin/plugin.json` — 버전 올림
+
+## 11. 실측 결과 (구현 전, 2026-10-05)
+
+| 항목 | 결과 | 반영 |
+|---|---|---|
+| V1 워커 표식 전달 | A export: `worker=v1a`, B split `--env`: `worker=v1b` (둘 다 전달됨. 두 pane 모두 시작 대화상자 때문에 `agent_not_ready`였지만 SessionStart 훅은 실행됨) | export 유지 |
+| V2 `if` 패턴 | (1) `cd /tmp && true` → `Bash(cd *)` (2) `git -C /tmp status` → `Bash(*git -C *)` (3) `ls` → 없음 (4) `true && cd /tmp` → `Bash(cd *)`. `Bash(* cd *)`는 한 번도 발동하지 않음: Claude Code가 복합 명령을 하위 명령별로 매칭함 | Task 4에서 `Bash(* cd *)` 그룹 제거 (`if`를 빼지 않음) |
+| V3 프로젝트 안 `cd` 후 `cwd` | main: `cd .worktrees/x` 다음 호출부터 `cwd`가 `…/.worktrees/x`. sub: 메인이 바꾼 `cwd`를 그대로 받음 (세션의 셸 상태 공유). 프로젝트 밖으로 `cd`하면 원위치로 초기화(F3) | `home`은 "hook `cwd`의 worktree이며, 마지막으로 `cd`한 디렉터리일 수 있다". 알려진 누락에 추가(§7-4) |
+| V4 `wait-output` | 새 pane에서 300줄: exit 0 / 2.64s. 셸이 떠 있는 pane에서 900줄: exit 0 / 0.56s. `--lines 400`: 한 번은 exit 2 / 0.03s, 재시도는 exit 0 (불안정) | 원인은 브리프 길이가 아니라 새 pane의 셸 시작 시간. Task 5는 `--lines` 없이 timeout 15000 + 화면 재확인 |
+
+§7 보충:
+
+4. **메인 세션이 프로젝트 안의 linked worktree로 `cd`한 상태**(예: `.worktrees/x`)에서는 그 worktree가 `home`이 된다. 서브에이전트가 그곳에 쓰는 것은 "자기 worktree"로 통과한다(V3).
