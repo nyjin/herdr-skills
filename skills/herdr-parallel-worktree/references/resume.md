@@ -51,10 +51,12 @@ Find the agent's native way to resume a session by its reference, starting from 
 Then start it in the recreated pane. A freshly created pane's shell may not be ready yet, and `agent start` then fails with `agent_pane_busy`, so wait for the prompt first:
 
 ```bash
-herdr pane run "$P" "echo shell-ready"
+herdr pane run "$P" "export HERDR_PW_WORKER=<name>; echo shell-ready"
 herdr pane wait-output "$P" --match shell-ready --timeout 10000
 herdr agent start <name> --kind <agent> --pane "$P" --timeout 20000 -- <worker args, if they apply to this agent> <resume arguments you found>
 ```
+
+The `export` marks the resumed claude as worker `<name>`, exactly as step 3 of the skill does for a new worker.
 
 `config.json`'s `workerArgs` were written for the agent the worker was started with; pass them only if they belong to this agent. If the user gave a follow-up instruction ("resume proj-101 and fix the failing test"), add it the way this agent accepts an initial prompt, as a single line (herdr rejects arguments with newlines). Handle `timeout`, `blocked` and `agent_not_ready` exactly as in SKILL.md step 3.
 

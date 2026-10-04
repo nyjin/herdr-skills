@@ -1,11 +1,8 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "herdr-parallel-worktree config",
-  "description": "Lives at DATA_DIR/config.json as defined in SKILL.md's Configuration section (the same place in the user's home regardless of install method). Values differ per person, so it is never kept in the repository; if the file is missing, SKILL.md's initialization creates it.",
+  "description": "Lives at DATA_DIR/config.json as defined in SKILL.md's Configuration section (the same place in the user's home regardless of install method). Values differ per person, so it is never kept in the repository. Every key is optional and falls back to its default; the first run writes a file with the defaults.",
   "type": "object",
-  "required": [
-    "workerArgs"
-  ],
   "properties": {
     "workerArgs": {
       "type": "array",
@@ -21,7 +18,8 @@
           "--dangerously-skip-permissions"
         ],
         []
-      ]
+      ],
+      "default": []
     },
     "hooks": {
       "type": "string",
