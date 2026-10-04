@@ -155,6 +155,10 @@ def decide(event, env, probe=git_probe):
     args = event.get("tool_input") or {}
     who = actor(event, env)
     cwd = event.get("cwd") or os.getcwd()
+    if hook == "PostToolUse":
+        if tool in ("Agent", "Task") and who == "main":
+            return {"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": NOTE_HANDOFF}}
+        return None
     if hook != "PreToolUse":
         return None
     if creates_worktree(tool, args):

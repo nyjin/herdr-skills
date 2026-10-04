@@ -264,5 +264,115 @@ class GitProbeTest(unittest.TestCase):
             self.assertIsNone(route.git_probe(self.wt))
 
 
+import json as _json
+import sys as _sys
+
+
+class PostToolUseTest(unittest.TestCase):
+    # Shape measured on Claude Code 2.1.289: PostToolUse(Agent) fires at launch with an async status.
+    RESPONSE = {"isAsync": True, "status": "async_launched", "agentId": "a17c", "description": "probe"}
+
+    def post(self, tool="Agent", sub=False):
+        e = event(tool, sub=sub, hook="PostToolUse", prompt="x", subagent_type="general-purpose")
+        e["tool_response"] = self.RESPONSE
+        return e
+
+    def test_main_gets_the_note(self):
+        for tool in ("Agent", "Task"):
+            with self.subTest(tool=tool):
+                out = route.decide(self.post(tool), MAIN_ENV, fake_probe)
+                self.assertEqual(out, {"hookSpecificOutput": {"hookEventName": "PostToolUse",
+                                                              "additionalContext": route.NOTE_HANDOFF}})
+
+    def test_no_note_for_sub_worker_or_other_tools(self):
+        self.assertIsNone(route.decide(self.post(sub=True), MAIN_ENV, fake_probe))
+        self.assertIsNone(route.decide(self.post(), WORKER_ENV, fake_probe))
+        e = event("Bash", hook="PostToolUse", command="ls")
+        self.assertIsNone(route.decide(e, MAIN_ENV, fake_probe))
+
+
+class EntryPointTest(unittest.TestCase):
+    """Run route.py as Claude Code does: JSON on stdin, decision on stdout, always exit 0."""
+
+    def run_route(self, arg, payload, env_extra, data_home):
+        env = {k: v for k, v in os.environ.items() if k not in ("HERDR_ENV", "HERDR_PW_WORKER")}
+        env.update(env_extra)
+        env["HERDR_SKILLS_DATA_HOME"] = data_home
+        r = subprocess.run([_sys.executable, ROUTE_PATH, arg], input=payload, capture_output=True,
+                           text=True, env=env, timeout=10)
+        self.assertEqual(r.returncode, 0)
+        return r.stdout
+
+    def setUp(self):
+        self.data = tempfile.mkdtemp()
+        self.payload = _json.dumps(event("Bash", command="git worktree add ../x"))
+
+    def tearDown(self):
+        subprocess.run(["rm", "-rf", self.data], check=False)
+
+    def test_denies_inside_herdr(self):
+        out = self.run_route("pre-tool-use", self.payload, {"HERDR_ENV": "1"}, self.data)
+        self.assertEqual(_json.loads(out)["hookSpecificOutput"]["permissionDecision"], "deny")
+
+    def test_silent_outside_herdr(self):
+        self.assertEqual(self.run_route("pre-tool-use", self.payload, {}, self.data), "")
+
+    def test_silent_when_hooks_off(self):
+        os.makedirs(os.path.join(self.data, "herdr-parallel-worktree"))
+        with open(os.path.join(self.data, "herdr-parallel-worktree", "config.json"), "w") as f:
+            f.write('{"hooks": "off"}')
+        self.assertEqual(self.run_route("pre-tool-use", self.payload, {"HERDR_ENV": "1"}, self.data), "")
+
+    def test_silent_on_bad_input_or_argument(self):
+        self.assertEqual(self.run_route("pre-tool-use", "not json", {"HERDR_ENV": "1"}, self.data), "")
+        self.assertEqual(self.run_route("bogus", self.payload, {"HERDR_ENV": "1"}, self.data), "")
+        self.assertEqual(self.run_route("pre-tool-use", "[]", {"HERDR_ENV": "1"}, self.data), "")
+
+    def test_post_tool_use_note(self):
+        payload = _json.dumps(event("Agent", hook="PostToolUse", prompt="x"))
+        out = self.run_route("post-tool-use", payload, {"HERDR_ENV": "1"}, self.data)
+        self.assertEqual(_json.loads(out)["hookSpecificOutput"]["additionalContext"], route.NOTE_HANDOFF)
+
+
+class SpecMatrixTest(unittest.TestCase):
+    """Spec §5.3, cell by cell: every rule R1–R6 for every caller. Keep this table identical to the spec's."""
+    RULES = {
+        "R1": lambda sub, cwd: event("Bash", sub=sub, cwd=cwd, command="git worktree add ../x -b x"),
+        "R2": lambda sub, cwd: event("EnterWorktree", sub=sub, cwd=cwd),
+        "R3": lambda sub, cwd: event("Agent", sub=sub, cwd=cwd, prompt="p", isolation="worktree"),
+        "R4": lambda sub, cwd: event("Write", sub=sub, cwd=cwd, file_path="/w/b/f.py"),
+        "R5": lambda sub, cwd: event("Bash", sub=sub, cwd=cwd, command="cd /w/b && make"),
+        "R6": lambda sub, cwd: event("Agent", sub=sub, cwd=cwd, hook="PostToolUse", prompt="p"),
+    }
+    ACTORS = {"main": (False, "/r", MAIN_ENV), "sub": (True, "/r", MAIN_ENV),
+              "worker": (False, "/w/a", WORKER_ENV), "worker-sub": (True, "/w/a", WORKER_ENV)}
+    #          main     sub    worker    worker-sub
+    TABLE = {
+        "R1": ("MAIN", "SUB", "WORKER", "SUB"),
+        "R2": ("MAIN", "SUB", "WORKER", "SUB"),
+        "R3": ("MAIN", "SUB", "WORKER", "SUB"),
+        "R4": (None, "SUB", None, "SUB"),
+        "R5": (None, "SUB", None, "SUB"),
+        "R6": ("NOTE", None, None, None),
+    }
+
+    @staticmethod
+    def outcome(out):
+        if out is None:
+            return None
+        hso = out["hookSpecificOutput"]
+        if hso.get("additionalContext") == route.NOTE_HANDOFF:
+            return "NOTE"
+        return {route.DENY_MAIN: "MAIN", route.DENY_SUB: "SUB",
+                route.deny_worker("w1", "/w/a"): "WORKER"}.get(hso.get("permissionDecisionReason"), "OTHER")
+
+    def test_every_cell(self):
+        for rule, expected in self.TABLE.items():
+            for (who, (sub, cwd, env)), want in zip(self.ACTORS.items(), expected):
+                with self.subTest(rule=rule, caller=who):
+                    got = self.outcome(route.decide(self.RULES[rule](sub, cwd), env, fake_probe))
+                    self.assertEqual(got, want)
+
+
 if __name__ == "__main__":
     unittest.main()
