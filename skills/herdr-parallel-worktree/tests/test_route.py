@@ -374,5 +374,38 @@ class SpecMatrixTest(unittest.TestCase):
                     self.assertEqual(got, want)
 
 
+class ReviewFixTest(unittest.TestCase):
+    """Findings of the final branch review: quoted or heredoc text is not a command; a failed probe allows."""
+
+    def test_worktree_add_inside_quotes_is_not_a_command(self):
+        for cmd in ('git commit -m "fix; git worktree add docs"',
+                    "echo 'a | git worktree add b'",
+                    "python3 - <<'EOF'\nprint(\"echo hi && git worktree add x\")\nEOF",
+                    "cat <<EOF > notes.md\ngit worktree add ../x\nEOF"):
+            with self.subTest(cmd=cmd):
+                self.assertIsNone(route.decide(event("Bash", command=cmd), MAIN_ENV, fake_probe))
+
+    def test_heredoc_body_is_not_a_cd(self):
+        cmd = "cat <<'EOF' > notes.md\ncd /w/b\nEOF"
+        self.assertEqual(route.dir_targets(cmd), [])
+
+    def test_commands_after_a_heredoc_still_count(self):
+        cmd = "cat <<'EOF' > notes.md\nhello\nEOF\ngit worktree add ../x"
+        self.assertEqual(reason(route.decide(event("Bash", command=cmd), MAIN_ENV, fake_probe)), route.DENY_MAIN)
+
+    def test_quoted_global_option_with_space_is_still_creation(self):
+        for cmd in ('git -C "/Users/x/my repo" worktree add ../wt -b t',
+                    "git -C '/Users/x/my repo' worktree add ../wt -b t"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(reason(route.decide(event("Bash", command=cmd), MAIN_ENV, fake_probe)),
+                                 route.DENY_MAIN)
+
+    def test_failed_probe_of_cwd_allows(self):
+        def probe(path):   # the target resolves, the session's own directory does not (timeout, deleted cwd)
+            return fake_probe(path) if path.startswith("/w/b") else None
+        self.assertIsNone(route.other_worktree("/w/b/f.py", "/w/a", probe))
+        self.assertIsNone(route.decide(event("Write", sub=True, cwd="/w/a", file_path="/w/b/f.py"), MAIN_ENV, probe))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -66,7 +66,8 @@ def deny_worker(name, home):
 
 
 # `git [global options] worktree add` in command position (start, or after ; & | ( or $( ), optionally
-# behind VAR=value assignments — not the phrase quoted inside a commit message or a grep pattern.
+# behind VAR=value assignments. Matched against code_only(command), so the phrase inside a commit message, a
+# grep pattern or a heredoc is not a command, and a quoted option value with spaces (`-C "/my repo"`) is one word.
 WORKTREE_ADD = re.compile(r"(?:^|[;&|(\n]|\$\()\s*(?:\w+=\S*\s+)*(?:command\s+)?git\b(?:\s+-\S+(?:\s+[^-\s]\S*)?)*\s+worktree\s+add\b")
 
 # `git -C <dir>` anywhere, or `cd <dir>` in command position. <dir> must be a plain word or a simply quoted
@@ -74,6 +75,14 @@ WORKTREE_ADD = re.compile(r"(?:^|[;&|(\n]|\$\()\s*(?:\w+=\S*\s+)*(?:command\s+)?
 DIR_ARG = re.compile(r"""(?:\bgit\s+-C|(?:^|[;&|(\n])\s*cd)\s+("[^"$`\\]*"|'[^']*'|[^\s;&|()<>$`'"\\]+)(?=[\s;&|)]|$)""")
 WRITE_TOOLS = {"Write": "file_path", "Edit": "file_path", "MultiEdit": "file_path", "NotebookEdit": "notebook_path"}
 QUOTED = re.compile(r"""("[^"]*"|'[^']*')""")
+# A heredoc from `<<WORD` (or <<'WORD', <<-WORD) through the line holding only WORD: its body is data, not commands.
+HEREDOC = re.compile(r"""<<-?[ \t]*(['"]?)(\w+)\1[^\n]*\n(?:.*?\n)?[ \t]*\2[ \t]*(?=\n|$)""", re.S)
+
+
+def code_only(command):
+    """`command` with heredoc bodies dropped and quoted spans replaced by a placeholder word, so text that is only
+    data — a commit message, an echo, a heredoc — is never read as a command."""
+    return QUOTED.sub("Q", HEREDOC.sub("<<HEREDOC", command))
 
 
 def actor(event, env):
@@ -111,7 +120,7 @@ def other_worktree(path, cwd, probe):
     if not found or found[0] == found[1]:   # unknown, or the main checkout
         return None
     home = probe(cwd)
-    if home and home[2] == found[2]:
+    if not home or home[2] == found[2]:   # own worktree, or the session's own directory is unknown (fail open)
         return None
     return found[2]
 
@@ -120,6 +129,7 @@ def dir_targets(command):
     """Directories that `cd <dir>` or `git -C <dir>` in `command` act on, when they can be read for certain."""
     # Blank out quoted arguments that are not themselves a cd / git -C target, so a commit message or an
     # echo that mentions "cd …" is not read as a command.
+    command = HEREDOC.sub("<<HEREDOC", command)
     out = []
     for m in DIR_ARG.finditer(command):
         start = m.start()
@@ -145,7 +155,7 @@ def home_of(cwd, probe):
 
 
 def creates_worktree(tool, args):
-    return bool((tool == "Bash" and WORKTREE_ADD.search(args.get("command") or ""))
+    return bool((tool == "Bash" and WORKTREE_ADD.search(code_only(args.get("command") or "")))
                 or (tool == "EnterWorktree" and not args.get("path"))
                 or (tool in ("Agent", "Task") and args.get("isolation") == "worktree"))   # Task: Agent's older name
 
