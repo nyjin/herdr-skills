@@ -219,34 +219,39 @@ herdr 안에서 발단 사건을 재현한다. 메인이 worktree 지시를 담�
 | O3 | 백그라운드 Bash | PostToolUse가 실행 시작 0.06초 후 발동한다(`tool_response.backgroundTaskId`). 실제 쓰기는 그 뒤에 일어난다. 서브에이전트가 끝나면 백그라운드 작업도 종료되었다(`backgroundEndsWithFinalResponse`) |
 | O4 | 이미 수정된 파일 재수정 | `git status --porcelain`은 변하지 않는다. mtime은 변한다(추적·비추적 파일 모두) |
 | O5 | 비용 | 소형 저장소 + linked worktree 5개: 스냅샷 1회 134ms(순차). 실제 저장소(1.8~2.8천 파일) `git status` 1회: 71ms(warm)~177ms(cold) |
+| O6 | 실행 시간 | Bash의 PostToolUse와 PostToolUseFailure 모두 `duration_ms`가 있다. 창 [Post 시각 − duration, Post 시각]에 실제 쓰기 mtime이 들어갔다(성공 4.6초 창, 실패 1.1초 창). 창 시작은 PreToolUse 훅 시각보다 약 0.07초 늦다 |
 
 ### 12.3 설계
 
 **R5를 교체한다.** `DIR_ARG`/`dir_targets`와 `cd`·`git -C` `if` 필터는 제거한다. R4(Write/Edit 도구의 사전 차단)는 유지한다. 도구의 쓰기는 대상 경로가 입력에 있으므로 미리 막는 편이 낫다.
 
-**R7 — 서브에이전트 Bash의 결과 관찰** (`agent_id`가 있을 때만. 메인과 워커 본인은 곧바로 종료)
+**R7 — 서브에이전트 Bash의 결과 관찰** (PostToolUse와 PostToolUseFailure, `agent_id`가 있을 때만. 메인과 워커 본인은 곧바로 종료). 실행 전 스냅샷은 찍지 않는다. O6의 `duration_ms`로 명령이 실행된 시간 창을 알 수 있으므로, PreToolUse 훅과 호출별 상태 파일이 필요 없다.
 
 1. **관찰 대상 W**는 두 집합의 합집합이다.
    - 세션 `cwd` 저장소의 linked worktree: `git worktree list --porcelain` 1회
    - runs.json에 기록된 열린 워커의 worktree: 다른 저장소 포함(발단 사건처럼 메인과 다른 저장소)
    
-   단, `home`(세션 `cwd`의 worktree)은 제외한다. W가 비어 있으면 아무것도 하지 않는다. 워커가 없는 일반적인 경우의 비용은 python 시작 1회다.
-2. **PreToolUse(Bash):** W의 각 worktree에 대해 `HEAD`, `git --no-optional-locks status --porcelain=v2 -z --untracked-files=all` 결과, 그리고 그 결과에 나온 각 파일의 `(mtime_ns, size)`를 기록한다. 기록은 상태 파일 `${TMPDIR}/herdr-pw-observe/<session_id>/<tool_use_id>.json`에 둔다. git 호출은 worktree별로 병렬 실행하고, 각 호출에 2초 timeout을 건다. 출력은 없다(막지 않음).
-3. **PostToolUse(Bash) / PostToolUseFailure(Bash):** 같은 `tool_use_id`의 기록을 읽어 같은 방식으로 다시 스냅샷을 찍고 비교한다. 바뀐 worktree 집합을 C라고 한다.
+   단, `home`(세션 `cwd`의 worktree)은 제외한다. W가 비어 있으면 아무것도 하지 않는다.
+2. **창** = [Post 시각 − `duration_ms` − 0.5초, Post 시각]. 0.5초는 시계와 mtime 기록 시점의 오차를 흡수하기 위한 여유다.
+3. **변화 감지:** W의 worktree마다 병렬로, 각 호출에 2초 timeout을 걸고 다음 중 하나라도 창 안이면 "바뀜"으로 본다.
+   - `git --no-optional-locks status --porcelain=v2 -z --untracked-files=all`에 나온 파일 중 mtime이 창 안인 것: 새 수정과 재수정(O4)을 모두 잡는다.
+   - 삭제로 나온 파일은 상위 디렉터리의 mtime이 창 안인지 본다.
+   - `git rev-parse --git-path logs/HEAD`의 mtime이 창 안인지 본다: 커밋, 체크아웃, reset을 잡는다.
+   
+   바뀐 worktree 집합을 C라고 한다.
 4. **귀속:** C의 worktree w마다 판정한다.
-   - 명령 원문(`code_only` 이전 원문)에 w의 경로가 들어 있으면 → 서브에이전트가 바꾼 것이다.
+   - 명령 원문에 w의 경로가 들어 있으면 → 서브에이전트가 바꾼 것이다.
    - 그렇지 않고, w가 열린 워커의 worktree이며 그 워커가 `working` 상태이면 → **보류(통과)**. 워커 자신이 고쳤을 수 있다.
    - 그 밖의 경우 → 서브에이전트가 바꾼 것이다(그 시간에 w를 고칠 다른 주체가 없음).
-5. **응답:** 서브에이전트로 귀속된 w가 있으면 `additionalContext`로 DENY_SUB와 같은 취지의 OBSERVED_SUB를 보낸다. 내용은 "worktree `<w>`를 바꿨다. 더 바꾸지 말고 멈춰서 HANDOFF를 반환하라. 이미 바꾼 것은 `done:`에 적어라"이다. O2에 따라 실행을 멈추는 장치는 없으므로 지시문에 의존한다.
-6. **백그라운드(O3):** `backgroundTaskId`가 있는 PostToolUse에서는 Pre 기록을 지우지 않고 그 에이전트의 "열린 창"으로 남긴다. 같은 에이전트의 다음 Bash에서 Pre 스냅샷을 찍을 때 열린 창의 기록과 비교한다. 이때 귀속 규칙은 같고, 명령 원문으로는 백그라운드 명령의 원문을 쓴다. 에이전트가 더 이상 Bash를 쓰지 않으면 놓친다(알려진 누락).
-7. **정리:** 1시간이 지난 상태 파일은 훅이 실행될 때 지운다.
-8. **실패하면 통과:** git 오류, timeout, 상태 파일 누락은 모두 감지 없음으로 처리한다.
+5. **응답:** 서브에이전트로 귀속된 w가 있으면 `additionalContext`로 OBSERVED_SUB를 보낸다. 내용은 "worktree `<w>`를 바꿨다. 더 바꾸지 말고 멈춰서 HANDOFF를 반환하라. 이미 바꾼 것은 `done:`에 적어라"이다. O2에 따라 실행을 멈추는 장치는 없으므로 지시문에 의존한다.
+6. **백그라운드(O3):** `tool_response.backgroundTaskId`가 있는 PostToolUse에서는 판정하지 않는다. 대신 `${TMPDIR}/herdr-pw-observe/<session_id>/<agent_id>.json`에 (시작 시각, 명령 원문)을 추가한다. 같은 에이전트의 다음 PostToolUse/PostToolUseFailure에서는 창 시작을 그 기록의 가장 이른 시작 시각으로 넓히고, 귀속 규칙의 명령 원문에 그 백그라운드 명령들을 포함한다. 판정한 뒤 기록을 지운다. 에이전트가 더 이상 Bash를 쓰지 않으면 놓친다(알려진 누락). 1시간이 지난 기록은 훅이 실행될 때 지운다.
+7. **실패하면 통과:** git 오류, timeout, `duration_ms` 누락, 기록 파일 오류는 모두 감지 없음으로 처리한다.
 
 **워커 상태 확인:** 귀속 4단계에서만, 그리고 경로 언급이 없고 runs.json의 워커 worktree가 C에 있을 때만 `herdr agent get <name>`을 호출한다.
 
 ### 12.4 비용 목표
 - 워커와 linked worktree가 없을 때: python 시작만(약 40ms). 메인과 워커 본인은 매번 이 비용만 든다.
-- 서브에이전트 Bash, worktree 5개: Pre+Post 합계 0.5초 이하가 목표다(병렬 git). 구현 단계에서 L2c로 측정하고, 넘으면 보고한다.
+- 서브에이전트 Bash, worktree 5개: PostToolUse 1회에 0.3초 이하가 목표다(병렬 git, Pre 없음). 구현 단계에서 L2c로 측정하고, 넘으면 보고한다.
 
 ### 12.5 알려진 누락 (§7에 추가)
 5. 쓰기는 **사후 감지**다. 첫 명령의 변화는 남는다. 되돌리지 않고 HANDOFF의 `done:`으로 전달한다.
@@ -255,10 +260,10 @@ herdr 안에서 발단 사건을 재현한다. 메인이 worktree 지시를 담�
 8. 메인 세션과 워커 본인의 Bash 쓰기는 관찰하지 않는다(정상 사용).
 
 ### 12.6 검증 추가
-- **L1:** 스냅샷 비교 순수 함수(추가, 삭제, 재수정 mtime, HEAD 변화), 귀속 규칙 표(경로 언급 × 워커 상태), 열린 창, 실패 시 통과, 상태 파일 정리
+- **L1:** 창 계산(`duration_ms`, 여유 0.5초, 백그라운드 기록으로 넓히기), 변화 감지 순수 함수(창 안/밖 mtime, 재수정, 삭제의 상위 디렉터리, logs/HEAD), 귀속 규칙 표(경로 언급 × 워커 상태), 실패 시 통과, 백그라운드 기록 정리
 - **L2:** live_hooks에 C12~C15 추가
   - C12: 서브에이전트가 `echo > <다른 wt>/f` 실행 → OBSERVED_SUB 수신, HANDOFF 반환
   - C13: `sed -i`로 이미 수정된 파일 재수정 → 감지
   - C14: 실패로 끝나는 쓰기(`…; false`) → `PostToolUseFailure`에서 감지
   - C15: 서브에이전트가 자기 `cwd` worktree에 쓰기 → 통과
-- **L2c:** worktree 5개에서 서브에이전트 Bash 1회의 Pre+Post 지연 측정, 목표 0.5초
+- **L2c:** worktree 5개에서 서브에이전트 Bash 1회의 PostToolUse 지연 측정, 목표 0.3초
