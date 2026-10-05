@@ -219,6 +219,7 @@ herdr 안에서 발단 사건을 재현한다. 메인이 worktree 지시를 담�
 | O3 | 백그라운드 Bash | PostToolUse가 실행 시작 0.06초 후 발동한다(`tool_response.backgroundTaskId`). 실제 쓰기는 그 뒤에 일어난다. 서브에이전트가 끝나면 백그라운드 작업도 종료되었다(`backgroundEndsWithFinalResponse`) |
 | O4 | 이미 수정된 파일 재수정 | `git status --porcelain`은 변하지 않는다. mtime은 변한다(추적·비추적 파일 모두) |
 | O5 | 비용 | 소형 저장소 + linked worktree 5개: 스냅샷 1회 134ms(순차). 실제 저장소(1.8~2.8천 파일) `git status` 1회: 71ms(warm)~177ms(cold) |
+| O7 | mtime 대 ctime | `cp -p` 덮어쓰기, `touch -t` 과거 시각, `rsync -a` 새 파일은 mtime이 창 밖으로 남아 놓친다. ctime(inode 변경 시각)은 셋 모두 창 안이었다. `git --no-optional-locks status`와 파일 읽기는 ctime을 바꾸지 않았다 |
 | O6 | 실행 시간 | Bash의 PostToolUse와 PostToolUseFailure 모두 `duration_ms`가 있다. 창 [Post 시각 − duration, Post 시각]에 실제 쓰기 mtime이 들어갔다(성공 4.6초 창, 실패 1.1초 창). 창 시작은 PreToolUse 훅 시각보다 약 0.07초 늦다 |
 
 ### 12.3 설계
@@ -232,11 +233,11 @@ herdr 안에서 발단 사건을 재현한다. 메인이 worktree 지시를 담�
    - runs.json에 기록된 열린 워커의 worktree: 다른 저장소 포함(발단 사건처럼 메인과 다른 저장소)
    
    단, `home`(세션 `cwd`의 worktree)은 제외한다. W가 비어 있으면 아무것도 하지 않는다.
-2. **창** = [Post 시각 − `duration_ms` − 0.5초, Post 시각]. 0.5초는 시계와 mtime 기록 시점의 오차를 흡수하기 위한 여유다.
+2. **창** = [Post 시각 − `duration_ms` − 0.5초, Post 시각]. 0.5초는 시계와 시각 기록 시점의 오차를 흡수하기 위한 여유다. 파일 시각은 모두 **ctime**으로 본다(O7). mtime은 `cp -p`·`rsync -a`·`touch`로 과거 값을 가질 수 있지만, ctime은 쓰기와 메타데이터 변경 때 항상 현재 시각이 되고 임의로 설정할 수 없다.
 3. **변화 감지:** W의 worktree마다 병렬로, 각 호출에 2초 timeout을 걸고 다음 중 하나라도 창 안이면 "바뀜"으로 본다.
-   - `git --no-optional-locks status --porcelain=v2 -z --untracked-files=all`에 나온 파일 중 mtime이 창 안인 것: 새 수정과 재수정(O4)을 모두 잡는다.
-   - 삭제로 나온 파일은 상위 디렉터리의 mtime이 창 안인지 본다.
-   - `git rev-parse --git-path logs/HEAD`의 mtime이 창 안인지 본다: 커밋, 체크아웃, reset을 잡는다.
+   - `git --no-optional-locks status --porcelain=v2 -z --untracked-files=all`에 나온 파일 중 ctime이 창 안인 것: 새 수정과 재수정(O4)을 모두 잡는다.
+   - 삭제로 나온 파일은 상위 디렉터리의 ctime이 창 안인지 본다.
+   - `git rev-parse --git-path logs/HEAD`의 ctime이 창 안인지 본다: 커밋, 체크아웃, reset을 잡는다.
    
    바뀐 worktree 집합을 C라고 한다.
 4. **귀속:** C의 worktree w마다 판정한다.
@@ -258,9 +259,11 @@ herdr 안에서 발단 사건을 재현한다. 메인이 worktree 지시를 담�
 6. `working` 상태 워커의 worktree에, 명령 원문에 경로가 드러나지 않는 방식으로 쓰면 보류로 통과한다(오탐 방지가 우선).
 7. 백그라운드 명령의 쓰기는 같은 에이전트가 다음 Bash를 쓸 때만 감지된다.
 8. 메인 세션과 워커 본인의 Bash 쓰기는 관찰하지 않는다(정상 사용).
+9. ctime은 메타데이터 변경(chmod, 이름 변경)에도 바뀐다. worktree 변화로 취급한다. 시스템 프로세스(확장 속성을 쓰는 보안 도구 등)가 창 안에 ctime을 바꾸면 오탐이 생길 수 있다.
+10. `.gitignore`로 무시되는 파일(빌드 산출물 등)의 변화는 `git status`에 나오지 않으므로 보지 않는다.
 
 ### 12.6 검증 추가
-- **L1:** 창 계산(`duration_ms`, 여유 0.5초, 백그라운드 기록으로 넓히기), 변화 감지 순수 함수(창 안/밖 mtime, 재수정, 삭제의 상위 디렉터리, logs/HEAD), 귀속 규칙 표(경로 언급 × 워커 상태), 실패 시 통과, 백그라운드 기록 정리
+- **L1:** 창 계산(`duration_ms`, 여유 0.5초, 백그라운드 기록으로 넓히기), 변화 감지 순수 함수(창 안/밖 ctime, 재수정, `cp -p`처럼 mtime이 과거인 쓰기, 삭제의 상위 디렉터리, logs/HEAD), 귀속 규칙 표(경로 언급 × 워커 상태), 실패 시 통과, 백그라운드 기록 정리
 - **L2:** live_hooks에 C12~C15 추가
   - C12: 서브에이전트가 `echo > <다른 wt>/f` 실행 → OBSERVED_SUB 수신, HANDOFF 반환
   - C13: `sed -i`로 이미 수정된 파일 재수정 → 감지
