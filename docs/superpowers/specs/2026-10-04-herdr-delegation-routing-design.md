@@ -270,3 +270,39 @@ herdr 안에서 발단 사건을 재현한다. 메인이 worktree 지시를 담�
   - C14: 실패로 끝나는 쓰기(`…; false`) → `PostToolUseFailure`에서 감지
   - C15: 서브에이전트가 자기 `cwd` worktree에 쓰기 → 통과
 - **L2c:** worktree 5개에서 서브에이전트 Bash 1회의 PostToolUse 지연 측정, 목표 0.3초
+
+## 13. 개정: 자기 worktree 밖에 쓰면 그 worktree의 주인에게 전달한다 (2026-10-07)
+
+### 13.1 원칙
+**자기 worktree 밖에 쓰면, 그 worktree의 주인이 받는다. 주인이 없으면 새로 만든다. 전달은 항상 메인이 한다.** child와 child의 서브에이전트는 같은 범위로 취급한다. child 안의 서브에이전트 사용(테스트 작성 위임, 리뷰·수정 플러그인 등)은 자기 worktree 안에서는 그대로 허용한다.
+
+### 13.2 쓰는 주체 × 대상
+
+| 쓰는 주체 ↓ / 대상 → | 자기 worktree (`home`) | 형제 child의 worktree (runs.json에 주인 있음) | 원본 저장소의 main checkout | 주인 없는 linked worktree |
+|---|---|---|---|---|
+| 메인 | 허용 | 허용 | 허용 | 허용 |
+| 메인의 서브에이전트 | 허용 | HANDOFF → 메인이 주인 child에게 전달 | 허용 (메인의 home) | HANDOFF → 메인이 새 child 생성 (확인 1회) |
+| child / child의 서브에이전트 | 허용 | 메인에 보고 → 메인이 주인 child에게 전달 | 메인에 보고 → **메인이 사용자에게 알리고 묻는다** | 메인에 보고 → 메인이 새 child 생성 (확인 1회) |
+| worktree 생성 (child / child의 서브에이전트) | 차단. 그래서 child가 만든 worktree는 생기지 않는다 | | | |
+
+"주인"은 runs.json의 열린 기록에서 worktree 경로로 찾는다. "main checkout"은 대상 worktree가 linked worktree가 아니고(`git-dir == common-dir`), 그 저장소가 child의 저장소와 같은 경우다.
+
+### 13.3 감지 범위 확장
+- **child 본인도 감지 대상에 넣는다.** §5.3의 R4(Write/Edit 사전 차단)와 §12의 R7(Bash 결과 관찰)을 `worker` 주체에도 적용한다. 판단 기준은 "home 밖"이다. home 안의 작업은 계속 통과하고 관찰 비용도 들지 않는다(대상 집합 W에서 home을 제외하므로).
+- child의 관찰 대상 W에는 main checkout도 포함한다. 메인 쪽 주체에게 main checkout은 home이므로 대상이 아니다.
+- 차단이나 감지 메시지에는 대상 worktree의 **주인 이름**(있으면)을 넣는다. HANDOFF에는 `owner: <worker name | main-checkout | none>` 줄을 추가한다.
+
+### 13.4 메인의 전달 절차 (스킬에 새 절 추가)
+HANDOFF를 받거나 child의 `## Result`에서 보고를 받으면 `owner`에 따라 처리한다.
+- **`owner: <worker>`**
+  1. 그 워커가 열려 있고 claude가 살아 있으면 후속 지시를 보낸다. 첫 지시와 같은 방식을 쓴다: 지시를 파일로 쓰고, 그 파일을 가리키는 한 줄을 보낸다(긴 붙여넣기는 거부될 수 있음). 워커가 `working`이면 `idle`/`done`이 될 때까지 기다린 뒤 보낸다.
+  2. 워커가 정리됐거나 세션이 끝났으면 `references/resume.md`로 재개한 뒤 보낸다.
+  
+  기존 워커에 일을 더하는 것이므로, 같은 확인 질문 안에서 사용자에게 보이고 확인 1회를 유지한다.
+- **`owner: main-checkout`**: 무엇이 바뀌었는지(또는 바뀌려 했는지)와 경로를 사용자에게 그대로 알리고 어떻게 할지 묻는다. 메인이 대신 반영하거나 되돌리지 않는다.
+- **`owner: none`**: 기존 흐름대로 새 child를 만든다(확인 1회).
+
+### 13.5 실측 필요
+- **T1:** 살아 있는 워커에 "파일을 가리키는 한 줄"로 후속 지시를 보내면 따르는가(`agent prompt`, 거부 여부).
+- **T2:** `working` 상태의 워커에 보낼 때 기다렸다 보내는 동작과 `agent prompt --wait` 조합.
+- **T3:** 재개한 워커에 후속 지시가 이어지는가(resume 후 대화 맥락 유지).
