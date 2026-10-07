@@ -100,11 +100,14 @@ jobs:
           set -euo pipefail
           jq -e '.hooks.PreToolUse and (.hooks.SessionStart | not)' hooks/hooks.json >/dev/null
           r=skills/herdr-parallel-worktree/scripts/hooks/route.py
-          ev='{"tool_name":"Bash","tool_input":{"command":"git worktree add ../x -b x"}}'
+          pre() { printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":%s}}' "$PWD" "$1"; }
+          ev="$(pre '"git worktree add ../x -b x"')"
           test -z "$(echo "$ev" | env -u HERDR_ENV python3 "$r" pre-tool-use)"          # outside herdr: silent
           echo "$ev" | HERDR_ENV=1 HERDR_SKILLS_DATA_HOME="$(mktemp -d)" python3 "$r" pre-tool-use | jq -e '.hookSpecificOutput.permissionDecision == "deny"'
-          test -z "$(echo '{"tool_name":"Bash","tool_input":{"command":"git status"}}' | HERDR_ENV=1 python3 "$r" pre-tool-use)"
-          test -z "$(echo '{"tool_name":"Bash","tool_input":{"command":"git commit -m \"explain git worktree add\""}}' | HERDR_ENV=1 python3 "$r" pre-tool-use)"   # quoted phrase: not a command
+          test -z "$(pre '"git status"' | HERDR_ENV=1 python3 "$r" pre-tool-use)"
+          test -z "$(pre '"git commit -m \"explain git worktree add\""' | HERDR_ENV=1 python3 "$r" pre-tool-use)"   # quoted phrase: not a command
+          post='{"hook_event_name":"PostToolUse","cwd":"'"$PWD"'","tool_name":"Bash","duration_ms":10,"tool_input":{"command":"ls"},"tool_response":{"stdout":""}}'
+          test -z "$(echo "$post" | HERDR_ENV=1 python3 -S "$r" post-tool-use-bash)"   # main session: exits before any work
 
       - name: runs.py smoke test
         run: |

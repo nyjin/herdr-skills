@@ -26,6 +26,8 @@ import sys
 # imported: these hooks fire on every edit and every Bash command inside herdr.
 NON_MAIN_ARGS = ("pre-tool-use-write", "post-tool-use-bash", "post-tool-use-failure")
 ALL_ARGS = ("pre-tool-use", "post-tool-use") + NON_MAIN_ARGS
+EVENT_OF_ARG = {"pre-tool-use": "PreToolUse", "pre-tool-use-write": "PreToolUse", "post-tool-use": "PostToolUse",
+                "post-tool-use-bash": "PostToolUse", "post-tool-use-failure": "PostToolUseFailure"}
 _RAW = None
 if __name__ == "__main__" and len(sys.argv) == 2 and sys.argv[1] in NON_MAIN_ARGS:
     _RAW = sys.stdin.buffer.read()
@@ -301,6 +303,8 @@ def main():
             event = json.loads(_RAW if _RAW is not None else sys.stdin.buffer.read())
         except ValueError:
             return
+        if isinstance(event, dict) and not event.get("hook_event_name"):   # hand-written input: trust the argument
+            event["hook_event_name"] = EVENT_OF_ARG[sys.argv[1]]
         out = decide(event, os.environ)
         if out:
             print(json.dumps(out))

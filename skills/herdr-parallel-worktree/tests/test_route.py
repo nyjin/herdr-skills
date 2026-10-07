@@ -324,6 +324,12 @@ class EntryPointTest(unittest.TestCase):
         self.assertEqual(self.run_route("bogus", self.payload, {"HERDR_ENV": "1"}, self.data), "")
         self.assertEqual(self.run_route("pre-tool-use", "[]", {"HERDR_ENV": "1"}, self.data), "")
 
+    def test_event_name_missing_falls_back_to_the_argument(self):
+        # CI and hand-written inputs may omit hook_event_name; the registered argument says which event it is
+        payload = _json.dumps({"tool_name": "Bash", "tool_input": {"command": "git worktree add ../x -b x"}})
+        out = self.run_route("pre-tool-use", payload, {"HERDR_ENV": "1"}, self.data)
+        self.assertEqual(_json.loads(out)["hookSpecificOutput"]["permissionDecision"], "deny")
+
     def test_post_tool_use_note(self):
         payload = _json.dumps(event("Agent", hook="PostToolUse", prompt="x"))
         out = self.run_route("post-tool-use", payload, {"HERDR_ENV": "1"}, self.data)
