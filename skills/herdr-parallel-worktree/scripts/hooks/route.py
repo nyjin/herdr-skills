@@ -24,20 +24,50 @@ import re
 import subprocess
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import owners  # noqa: E402
+
 SKILL = "herdr-parallel-worktree"
 WORKER_VAR = "HERDR_PW_WORKER"
-HANDOFF = (
-    "HERDR-HANDOFF\n"
-    f"To the main session: load the {SKILL} skill and turn this into a worker, confirming with the user once "
-    "(step 0). Do not tell the user to run it with `!` or to turn the hooks off.\n"
-    "name: <suggested worker name>\n"
-    "repo: <absolute path of the target repository>\n"
-    "goal: <one line>\n"
-    "branch: <suggested branch, or ->\n"
-    "steps:\n"
-    "- <step>\n"
-    "done: <what was already done, or nothing>"
-)
+
+
+def owner_label(owner):
+    if not owner:
+        return "<worker name | main-checkout | none>"
+    return owner[1] if owner[0] == "worker" else owner[0]
+
+
+def handoff(owner):
+    """The block a subagent or worker ends with; the main session routes it by its `owner:` line."""
+    return ("HERDR-HANDOFF\n"
+            f"To the main session: load the {SKILL} skill and handle this by its `owner:` line (step 0, "
+            "Receiving a handoff): pass it to that worker, ask the user about the main checkout, or start a new "
+            "worker for `none`, confirming with the user once. Do not tell the user to run it with `!` or to "
+            "turn the hooks off.\n"
+            "name: <suggested worker name>\n"
+            "repo: <absolute path of the target repository>\n"
+            f"owner: {owner_label(owner)}\n"
+            "goal: <one line>\n"
+            "branch: <suggested branch, or ->\n"
+            "steps:\n"
+            "- <step>\n"
+            "done: <what was already done, or nothing>")
+
+
+HANDOFF = handoff(None)
+NEW = ("none", None, None)   # a new worktree: nobody owns it yet
+
+
+def where(owner):
+    """How a message names the target, by owner."""
+    kind, name, top = owner
+    if kind == "worker":
+        return f"`{top}`, which worker `{name}` owns; the main session will pass this to worker `{name}`"
+    if kind == "main-checkout":
+        return f"the main checkout `{top}`; the main session will ask the user about it"
+    return f"another worktree (`{top}`)" if top else "a new worktree"
+
+
 DENY_MAIN = (
     f"Inside herdr, worktree work goes through the {SKILL} skill, so the user can watch each worker in the "
     "herdr sidebar. Load that skill and follow it from step 0, which confirms the tasks with the user once. "
@@ -46,23 +76,35 @@ DENY_MAIN = (
     "blocked it; they can run it themselves with `! <command>`, or turn the hooks off by asking to "
     f"\"turn off the {SKILL} hooks\"."
 )
-DENY_SUB = (
-    "You are a subagent. Inside herdr, work that needs its own worktree runs as a herdr worker, and only the "
-    "main session starts workers, after confirming with the user. Do not create the worktree or write into "
-    "another worktree, and do not retry another way. Do not suggest running anything with `!` or turning the "
-    "hooks off. Stop now and end your final reply with this block, filled in:\n\n" + HANDOFF
-)
+
+
+def deny_sub(owner):
+    return ("You are a subagent. Inside herdr, work outside your own worktree goes back to the main session, which "
+            "hands it to the worktree's owner or starts a herdr worker after confirming with the user. "
+            f"Do not create a worktree or write into {where(owner)}, and do not retry another way. Do not suggest "
+            "running anything with `!` or turning the hooks off. Stop now and end your final reply with this "
+            "block, filled in:\n\n" + handoff(owner))
+
+
+DENY_SUB = deny_sub(NEW)
 NOTE_HANDOFF = (
-    f"If this subagent returns a HERDR-HANDOFF block, load the {SKILL} skill and continue from its step 0 "
-    "with that block as one of the tasks. Do not tell the user to run anything with `!` or to turn the "
-    "hooks off."
+    f"If this subagent returns a HERDR-HANDOFF block, load the {SKILL} skill and handle it by the block's "
+    "`owner:` line (step 0, Receiving a handoff). Do not tell the user to run anything with `!` or to turn "
+    "the hooks off."
 )
 
 
-def deny_worker(name, home):
+def deny_worker_create(name, home):
     return (f"You are the herdr worker `{name}`. Workers do not create worktrees or start workers. Do the work "
             f"yourself in your own worktree ({home}). If it really needs a separate worker, put this block, "
-            "filled in, in your `## Result` and let the orchestrator decide:\n\n" + HANDOFF)
+            "filled in, in your `## Result` and let the orchestrator decide:\n\n" + handoff(NEW))
+
+
+def deny_worker_write(name, home, owner):
+    return (f"You are the herdr worker `{name}`. That file is outside your worktree ({home}): it is in "
+            f"{where(owner)}. Do not change it, and do not retry another way. Finish the rest of your task in your "
+            "own worktree, and put this block, filled in, in your `## Result` so the orchestrator can pass it "
+            "on:\n\n" + handoff(owner))
 
 
 # `git [global options] worktree add` in command position (start, or after ; & | ( or $( ), optionally
@@ -160,7 +202,33 @@ def creates_worktree(tool, args):
                 or (tool in ("Agent", "Task") and args.get("isolation") == "worktree"))   # Task: Agent's older name
 
 
-def decide(event, env, probe=git_probe):
+def write_target(event, env, probe, runs, main_of):
+    """R4: deny a subagent's or worker's Write/Edit outside its own worktree, by the owner of the target."""
+    who = actor(event, env)
+    args = event.get("tool_input") or {}
+    target = args.get(WRITE_TOOLS[event.get("tool_name")]) or ""
+    cwd = event.get("cwd") or os.getcwd()
+    if who == "main" or not target:
+        return None
+    home = probe(cwd)
+    if not home:
+        return None                              # the session's own directory is unknown: fail open
+    home_top, writer_common = os.path.realpath(home[2]), os.path.realpath(home[1])
+    writer_main = home_top if home[0] == home[1] else main_of(cwd)
+    path = os.path.normpath(os.path.join(cwd, os.path.expanduser(target)))
+    if owners.inside(os.path.realpath(path), home_top):
+        return None
+    if runs is None:
+        runs = owners.read_open_runs(owners.runs_path(env))
+    own = owners.owner_of(path, runs, probe, writer_common, writer_main)
+    if own is None or (who == "sub" and own[0] == "main-checkout"):   # out of scope, or the main session's home
+        return None
+    if who == "worker":
+        return deny(deny_worker_write(env[WORKER_VAR], home_top, own))
+    return deny(deny_sub(own))
+
+
+def decide(event, env, probe=git_probe, runs=None, main_of=owners.main_checkout_of):
     hook, tool = event.get("hook_event_name"), event.get("tool_name")
     args = event.get("tool_input") or {}
     who = actor(event, env)
@@ -175,16 +243,12 @@ def decide(event, env, probe=git_probe):
         if who == "main":
             return deny(DENY_MAIN)
         if who == "worker":
-            return deny(deny_worker(env[WORKER_VAR], home_of(cwd, probe)))
+            return deny(deny_worker_create(env[WORKER_VAR], home_of(cwd, probe)))
         return deny(DENY_SUB)
-    if who in ("sub", "worker-sub"):
-        if tool in WRITE_TOOLS:
-            targets = [args.get(WRITE_TOOLS[tool]) or ""]
-        elif tool == "Bash":
-            targets = dir_targets(args.get("command") or "")
-        else:
-            targets = []
-        if any(t and other_worktree(t, cwd, probe) for t in targets):
+    if tool in WRITE_TOOLS:
+        return write_target(event, env, probe, runs, main_of)
+    if who in ("sub", "worker-sub") and tool == "Bash":   # R5, replaced by observing results in a later task
+        if any(t and other_worktree(t, cwd, probe) for t in dir_targets(args.get("command") or "")):
             return deny(DENY_SUB)
     return None
 

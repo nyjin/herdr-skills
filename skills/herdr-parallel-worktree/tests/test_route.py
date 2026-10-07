@@ -13,14 +13,17 @@ spec = importlib.util.spec_from_file_location("route", ROUTE_PATH)
 route = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(route)
 
-MAIN_ENV = {"HERDR_ENV": "1"}
-WORKER_ENV = {"HERDR_ENV": "1", "HERDR_PW_WORKER": "w1"}
+# HERDR_SKILLS_DATA_HOME points nowhere, so decide() never reads the real runs.json
+NO_DATA = "/nonexistent/herdr-skills-test"
+MAIN_ENV = {"HERDR_ENV": "1", "HERDR_SKILLS_DATA_HOME": NO_DATA}
+WORKER_ENV = {"HERDR_ENV": "1", "HERDR_PW_WORKER": "w1", "HERDR_SKILLS_DATA_HOME": NO_DATA}
 
 # A fake repository: main checkout /r, linked worktrees /w/a and /w/b, and /x outside git.
 FAKE = {
     "/r": ("/r/.git", "/r/.git", "/r"),
     "/w/a": ("/r/.git/worktrees/a", "/r/.git", "/w/a"),
     "/w/b": ("/r/.git/worktrees/b", "/r/.git", "/w/b"),
+    "/w/c": ("/r/.git/worktrees/c", "/r/.git", "/w/c"),
 }
 
 
@@ -39,6 +42,11 @@ def event(tool, sub=False, cwd="/r", hook="PreToolUse", **tool_input):
         e["agent_id"] = "a1"
         e["agent_type"] = "general-purpose"
     return e
+
+
+def decide_fake(e, env, runs=()):
+    """decide() in the fake layout: /r is the main checkout of every fake worktree."""
+    return route.decide(e, env, fake_probe, runs=list(runs), main_of=lambda p: "/r")
 
 
 def reason(out):
@@ -86,7 +94,7 @@ class CreationTest(unittest.TestCase):
         for tool, args in self.CASES:
             with self.subTest(tool=tool, args=args):
                 r = reason(route.decide(event(tool, cwd="/w/a", **args), WORKER_ENV, fake_probe))
-                self.assertEqual(r, route.deny_worker("w1", "/w/a"))
+                self.assertEqual(r, route.deny_worker_create("w1", "/w/a"))
 
     def test_worker_sub_is_told_to_hand_off(self):
         for tool, args in self.CASES:
@@ -117,8 +125,27 @@ class MessageTest(unittest.TestCase):
     def test_sub_message_carries_the_handoff_block(self):
         self.assertIn("\nHERDR-HANDOFF\n", "\n" + route.DENY_SUB + "\n")
         self.assertTrue(route.HANDOFF.startswith("HERDR-HANDOFF\nTo the main session:"))
-        for field in ("name:", "repo:", "goal:", "branch:", "steps:", "done:"):
-            self.assertIn("\n" + field, route.HANDOFF)
+        self.assertIn("by its `owner:` line", route.HANDOFF.splitlines()[1])
+        fields = [l.split(":")[0] for l in route.HANDOFF.splitlines()[2:] if not l.startswith("- ")]
+        self.assertEqual(fields, ["name", "repo", "owner", "goal", "branch", "steps", "done"])
+
+    def test_handoff_owner_line(self):
+        self.assertIn("\nowner: b\n", route.handoff(("worker", "b", "/w/b")))
+        self.assertIn("\nowner: main-checkout\n", route.handoff(("main-checkout", None, "/r")))
+        self.assertIn("\nowner: none\n", route.handoff(("none", None, "/w/c")))
+        self.assertIn("\nowner: <worker name | main-checkout | none>\n", route.handoff(None))
+
+    def test_owner_specific_wording(self):
+        m = route.deny_sub(("worker", "b", "/w/b"))
+        self.assertIn("worker `b`", m)
+        self.assertIn("/w/b", m)
+        self.assertIn("ask the user", route.deny_sub(("main-checkout", None, "/r")))
+        w = route.deny_worker_write("w1", "/w/a", ("worker", "b", "/w/b"))
+        self.assertIn("`w1`", w)
+        self.assertIn("## Result", w)
+        self.assertIn("\nowner: b\n", w)
+        self.assertNotEqual(w, route.deny_worker_create("w1", "/w/a"))
+        self.assertIn("by the block's `owner:` line", route.NOTE_HANDOFF)
 
     def test_messages_never_suggest_bang_to_subagents(self):
         self.assertIn("Do not suggest", route.DENY_SUB)
@@ -128,7 +155,7 @@ class MessageTest(unittest.TestCase):
         self.assertIn("the user, in this conversation, explicitly asked", route.DENY_MAIN)
 
     def test_worker_message_names_worker_and_home(self):
-        m = route.deny_worker("w1", "/w/a")
+        m = route.deny_worker_create("w1", "/w/a")
         self.assertIn("`w1`", m)
         self.assertIn("/w/a", m)
         self.assertIn("HERDR-HANDOFF", m)
@@ -137,24 +164,6 @@ class MessageTest(unittest.TestCase):
 import subprocess
 import tempfile
 from unittest import mock
-
-
-class OtherWorktreeTest(unittest.TestCase):
-    def test_decisions(self):
-        cases = [
-            ("/w/b/f.py", "/r", "/w/b"),       # linked worktree, session in main checkout
-            ("/w/b/f.py", "/w/a", "/w/b"),     # another worker's worktree
-            ("/w/a/f.py", "/w/a", None),       # own worktree
-            ("/w/a/sub/f.py", "/w/a/sub", None),
-            ("/r/f.py", "/w/a", None),         # main checkout is not a linked worktree
-            ("/x/f.py", "/r", None),           # not in git
-        ]
-        for path, cwd, expected in cases:
-            with self.subTest(path=path, cwd=cwd):
-                self.assertEqual(route.other_worktree(path, cwd, fake_probe), expected)
-
-    def test_relative_path_resolves_against_cwd(self):
-        self.assertEqual(route.other_worktree("../b/f.py", "/w/a", fake_probe), "/w/b")
 
 
 class DirTargetsTest(unittest.TestCase):
@@ -186,7 +195,7 @@ class WriteRuleTest(unittest.TestCase):
                           ("NotebookEdit", "notebook_path")):
             with self.subTest(tool=tool):
                 out = route.decide(event(tool, sub=True, **{key: "/w/b/f.py"}), MAIN_ENV, fake_probe)
-                self.assertEqual(reason(out), route.DENY_SUB)
+                self.assertEqual(reason(out), route.deny_sub(("none", None, "/w/b")))
 
     def test_sub_bash_into_other_worktree_is_denied(self):
         out = route.decide(event("Bash", sub=True, command="cd /w/b && sed -i s/a/b/ f.py"), MAIN_ENV, fake_probe)
@@ -197,7 +206,6 @@ class WriteRuleTest(unittest.TestCase):
             (event("Write", sub=False, file_path="/w/b/f.py"), MAIN_ENV),                 # main may write anywhere
             (event("Write", sub=True, file_path="/r/f.py"), MAIN_ENV),                    # main checkout
             (event("Write", sub=True, file_path="/x/f.py"), MAIN_ENV),                    # outside git
-            (event("Write", cwd="/w/a", file_path="/w/b/f.py"), WORKER_ENV),              # worker itself
             (event("Write", sub=True, cwd="/w/a", file_path="/w/a/f.py"), WORKER_ENV),    # worker-sub, own worktree
             (event("Bash", sub=True, command="cd $WT && make"), MAIN_ENV),                # unreadable target
             (event("Bash", sub=True, command="ls /w/b"), MAIN_ENV),                       # no cd / git -C
@@ -208,7 +216,7 @@ class WriteRuleTest(unittest.TestCase):
 
     def test_worker_sub_write_into_other_worktree_is_denied(self):
         out = route.decide(event("Edit", sub=True, cwd="/w/a", file_path="/w/b/f.py"), WORKER_ENV, fake_probe)
-        self.assertEqual(reason(out), route.DENY_SUB)
+        self.assertEqual(reason(out), route.deny_sub(("none", None, "/w/b")))
 
 
 class GitProbeTest(unittest.TestCase):
@@ -239,15 +247,23 @@ class GitProbeTest(unittest.TestCase):
         self.assertEqual(top, os.path.realpath(self.wt))
 
     def test_symlinked_path_is_resolved(self):
-        cwd = os.path.realpath(self.repo)
-        self.assertEqual(route.other_worktree(os.path.join(self.wt, "f.py"), cwd, route.git_probe),
-                         os.path.realpath(self.wt))
-        self.assertIsNone(route.other_worktree(os.path.join(self.wt, "f.py"), os.path.realpath(self.wt),
-                                               route.git_probe))
+        # file_path through /var (unresolved) while cwd is resolved, and the other way round
+        wt_real = os.path.realpath(self.wt)
+        out = route.decide(event("Write", sub=True, cwd=os.path.realpath(self.repo),
+                                 file_path=os.path.join(self.wt, "f.py")), MAIN_ENV)
+        self.assertEqual(reason(out), route.deny_sub(("none", None, wt_real)))
+        self.assertIsNone(route.decide(event("Write", sub=True, cwd=wt_real,
+                                             file_path=os.path.join(self.wt, "f.py")), MAIN_ENV))
 
     def test_new_file_in_missing_dir_of_other_worktree(self):
         path = os.path.join(self.wt, "new", "deeper", "f.py")
-        self.assertEqual(route.other_worktree(path, self.repo, route.git_probe), os.path.realpath(self.wt))
+        out = route.decide(event("Write", sub=True, cwd=self.repo, file_path=path), MAIN_ENV)
+        self.assertEqual(reason(out), route.deny_sub(("none", None, os.path.realpath(self.wt))))
+
+    def test_worker_write_into_real_main_checkout(self):
+        out = route.decide(event("Write", cwd=self.wt, file_path=os.path.join(self.repo, "f.py")), WORKER_ENV)
+        self.assertEqual(reason(out), route.deny_worker_write(
+            "w1", os.path.realpath(self.wt), ("main-checkout", None, os.path.realpath(self.repo))))
 
     def test_outside_git_is_none(self):
         self.assertIsNone(route.git_probe(os.path.join(self.tmp, "f.py")))
@@ -351,7 +367,7 @@ class SpecMatrixTest(unittest.TestCase):
         "R1": ("MAIN", "SUB", "WORKER", "SUB"),
         "R2": ("MAIN", "SUB", "WORKER", "SUB"),
         "R3": ("MAIN", "SUB", "WORKER", "SUB"),
-        "R4": (None, "SUB", None, "SUB"),
+        "R4": (None, "SUB", "WORKER_WRITE", "SUB"),
         "R5": (None, "SUB", None, "SUB"),
         "R6": ("NOTE", None, None, None),
     }
@@ -363,8 +379,10 @@ class SpecMatrixTest(unittest.TestCase):
         hso = out["hookSpecificOutput"]
         if hso.get("additionalContext") == route.NOTE_HANDOFF:
             return "NOTE"
-        return {route.DENY_MAIN: "MAIN", route.DENY_SUB: "SUB",
-                route.deny_worker("w1", "/w/a"): "WORKER"}.get(hso.get("permissionDecisionReason"), "OTHER")
+        own = ("none", None, "/w/b")
+        return {route.DENY_MAIN: "MAIN", route.DENY_SUB: "SUB", route.deny_sub(own): "SUB",
+                route.deny_worker_create("w1", "/w/a"): "WORKER",
+                route.deny_worker_write("w1", "/w/a", own): "WORKER_WRITE"}.get(hso.get("permissionDecisionReason"), "OTHER")
 
     def test_every_cell(self):
         for rule, expected in self.TABLE.items():
@@ -403,8 +421,44 @@ class ReviewFixTest(unittest.TestCase):
     def test_failed_probe_of_cwd_allows(self):
         def probe(path):   # the target resolves, the session's own directory does not (timeout, deleted cwd)
             return fake_probe(path) if path.startswith("/w/b") else None
-        self.assertIsNone(route.other_worktree("/w/b/f.py", "/w/a", probe))
         self.assertIsNone(route.decide(event("Write", sub=True, cwd="/w/a", file_path="/w/b/f.py"), MAIN_ENV, probe))
+
+
+class R4OwnerMatrixTest(unittest.TestCase):
+    """Plan R4 table (spec §13.2), all 20 cells: writer x owner of the written file, exact messages."""
+    RUNS = [{"name": "b", "worktree": "/w/b", "state": "open"}]
+    WORKER, MAIN_CO, NONE = ("worker", "b", "/w/b"), ("main-checkout", None, "/r"), ("none", None, "/w/c")
+    WRITERS = {"main": (False, "/r", MAIN_ENV), "sub": (True, "/r", MAIN_ENV),
+               "worker": (False, "/w/a", WORKER_ENV), "worker-sub": (True, "/w/a", WORKER_ENV)}
+
+    def expected(self, who, target):
+        sub_deny = lambda own: route.deny_sub(own)
+        wk_deny = lambda own: route.deny_worker_write("w1", "/w/a", own)
+        table = {
+            "main":       {"home": None, "worker": None, "main": None, "none": None, "out": None},
+            "sub":        {"home": None, "worker": sub_deny(self.WORKER), "main": None,
+                           "none": sub_deny(self.NONE), "out": None},
+            "worker":     {"home": None, "worker": wk_deny(self.WORKER), "main": wk_deny(self.MAIN_CO),
+                           "none": wk_deny(self.NONE), "out": None},
+            "worker-sub": {"home": None, "worker": sub_deny(self.WORKER), "main": sub_deny(self.MAIN_CO),
+                           "none": sub_deny(self.NONE), "out": None},
+        }
+        return table[who][target]
+
+    def test_every_cell(self):
+        for who, (sub, cwd, env) in self.WRITERS.items():
+            targets = {"home": cwd + "/h.py", "worker": "/w/b/f.py", "main": "/r/m.py",
+                       "none": "/w/c/f.py", "out": "/x/f.py"}
+            for target, path in targets.items():
+                for tool, key in (("Write", "file_path"), ("NotebookEdit", "notebook_path")):
+                    with self.subTest(writer=who, target=target, tool=tool):
+                        out = decide_fake(event(tool, sub=sub, cwd=cwd, **{key: path}), env, self.RUNS)
+                        want = self.expected(who, target)
+                        self.assertEqual(None if out is None else reason(out), want)
+
+    def test_relative_path_resolves_against_cwd(self):
+        out = decide_fake(event("Edit", cwd="/w/a", file_path="../b/f.py"), WORKER_ENV, self.RUNS)
+        self.assertEqual(reason(out), route.deny_worker_write("w1", "/w/a", self.WORKER))
 
 
 if __name__ == "__main__":

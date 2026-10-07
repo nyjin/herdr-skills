@@ -72,7 +72,7 @@ herdr 안에서 worktree가 필요한 작업은 **어느 경로로 요청되든*
 | R1 | PreToolUse `Bash` | 명령 위치의 `git … worktree add` (기존 정규식) | DENY_MAIN | DENY_SUB | DENY_WORKER | DENY_SUB |
 | R2 | PreToolUse `EnterWorktree` | `path` 없음 | DENY_MAIN | DENY_SUB | DENY_WORKER | DENY_SUB |
 | R3 | PreToolUse `Agent`/`Task` | `isolation == "worktree"` | DENY_MAIN | DENY_SUB | DENY_WORKER | DENY_SUB |
-| R4 | PreToolUse `Write`/`Edit`/`MultiEdit`/`NotebookEdit` | `file_path`(또는 `notebook_path`)가 다른 worktree (§5.2) | 통과 | DENY_SUB | 통과 | DENY_SUB |
+| R4 | PreToolUse `Write`/`Edit`/`MultiEdit`/`NotebookEdit` | `file_path`(또는 `notebook_path`)가 자기 worktree 밖이고 owner가 있음 (§13.2 개정: 대상의 owner별) | 통과 | DENY_SUB(owner). main checkout은 통과 | DENY_WORKER_WRITE(owner) | DENY_SUB(owner) |
 | R5 | PreToolUse `Bash` | 명령 안 `git -C <p>` 또는 `cd <p>`의 `p`가 다른 worktree. `p`는 따옴표 없는 토큰이나 단순 따옴표 토큰만 해석하고, 변수나 치환이 들어 있으면 판정하지 않는다 | 통과 | DENY_SUB | 통과 | DENY_SUB |
 | R6 | PostToolUse `Agent`/`Task` | 항상 | NOTE_HANDOFF 주입 | — | — | — |
 
