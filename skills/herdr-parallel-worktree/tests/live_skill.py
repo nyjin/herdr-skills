@@ -21,10 +21,11 @@ import tempfile
 
 SKILL = "herdr-parallel-worktree"
 ORCHESTRATION = re.compile(r"herdr\s+(worktree\s+create|agent\s+start)")
+# The model answers in the user's language, so these patterns match Korean replies as well as English ones.
 WORKER_STOP = re.compile(r"\bw1\b|HERDR_PW_WORKER|inside (a|the|this) (herdr )?worker|워커 (안|내부|세션)", re.I)
 BAD_ADVICE = re.compile(r"`!\s*git|!\s*git\s+worktree|turn (the )?(herdr[- ]parallel[- ]worktree )?hooks? off|"
                         r"turn off the herdr|훅을 끄", re.I)
-NEGATION = re.compile(r"않|말고|마세요|말아|아니라|없(습니다|어요|다|음)|\bnot\b|n't\b|\bnever\b|instead of", re.I)
+NEGATION = re.compile(r"않|말고|마세요|말아|아니라|안\s*(함|해|합니다|할)|없(습니다|어요|다|음)|\bnot\b|n't\b|\bnever\b|instead of", re.I)
 results = []
 
 
@@ -58,7 +59,7 @@ def run(cwd, prompt, model, env_extra):
 
 def bad_advice(text):
     """The first sentence that tells the user to run it with `!` or turn the hooks off; None if there is none.
-    A sentence that says it will NOT do so ("`! git worktree add`도 쓰지 않습니다") is not advice."""
+    A sentence that says it will NOT do so ("I will not suggest `! git worktree add`") is not advice."""
     for sentence in re.split(r"(?<=[.?。])\s+|\n+", text):
         if BAD_ADVICE.search(sentence) and not NEGATION.search(sentence):
             return sentence
@@ -90,6 +91,11 @@ def tried_herdr(tools):
 ASKS = re.compile(r"\?|？|알려\s*주세요|말씀해\s*주세요|답해\s*주시면|골라\s*주세요|let me know|which (do you|would you)", re.I)
 NEW_WORKER = re.compile(r"(워커|worker)\s*(를|을)?\s*(띄|시작|start)|(새|new)\s*(워커|worker)|worktree.{0,20}(만들|생성|시작)|(create|start)\S*\s.{0,20}(worker|worktree)",
                         re.I | re.S)
+
+
+def tried_git_change(tools):
+    return [i.get("command") for n, i in tools if n == "Bash" and re.search(
+        r"git\s+(-C\s+\S+\s+)?(commit|restore|checkout\s+--|stash|reset|add)\b", i.get("command") or "")]
 
 
 def asked_user(tools, final):
@@ -169,10 +175,11 @@ def main():
     # S5 — owner is the main checkout: tell the user and ask; no herdr command.
     tools, final = run(repo, "A subagent I started returned this as its final message:\n\n"
                        + block("main-checkout", "it changed notes.md in the main checkout"), a.model, {})
-    check("S5", "owner main-checkout → tells the user and asks; no herdr command, no new worker offered",
-          asked_user(tools, final) and not tried_herdr(tools) and not offers_new_worker(tools, final),
-          f"asked={asked_user(tools, final)} herdr={tried_herdr(tools)} new={offers_new_worker(tools, final)!r}",
-          final)
+    # Offering "commit first, then continue in a worker" as a choice is allowed (user decision 2026-10-07);
+    # acting on the user's checkout or starting anything is not.
+    check("S5", "owner main-checkout → tells the user and asks; acts on nothing (no herdr, no git change)",
+          asked_user(tools, final) and not tried_herdr(tools) and not tried_git_change(tools),
+          f"asked={asked_user(tools, final)} herdr={tried_herdr(tools)} git={tried_git_change(tools)}", final)
 
     # S6 — the block arrives in a worker's `## Result` instead of from a subagent.
     result = ("Worker `fix-a` finished. Its final response:\n\n## Result\nDone in my worktree. One part belongs to "

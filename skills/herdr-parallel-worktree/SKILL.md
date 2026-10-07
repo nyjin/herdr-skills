@@ -2,7 +2,7 @@
 name: herdr-parallel-worktree
 license: MIT
 description: >-
-  Run 2+ coding tasks in parallel inside herdr (HERDR_ENV=1), each in its own git worktree with a visible claude worker. Also cleans up or resumes those workers, and manages the worker brief template and this skill's hooks. Not for use outside herdr.
+  Run 2+ coding tasks in parallel inside herdr (HERDR_ENV=1), each in its own git worktree with a visible claude worker. Also takes over HERDR-HANDOFF blocks that subagents or workers return, hands follow-up work to existing workers, cleans up or resumes them, and manages the worker brief template and this skill's hooks. Not for use outside herdr.
 ---
 
 # herdr parallel worktree
@@ -70,13 +70,13 @@ This skill's description is kept short on purpose: it sits in every session's co
 
 Every handoff carries `owner:`, and step 0 ("Receiving a handoff") routes by it. The hooks decide from tool calls and their effects, never from prompt wording. Outside herdr a shell guard returns before python starts; inside herdr, the hooks that fire on every edit and Bash command return before any work for the main session itself.
 
-Plugin installs ship it in the plugin's `hooks/hooks.json`, active by default. Other installs leave it unregistered until the user asks for it, because registering it edits `~/.claude/settings.json`; `scripts/hooks/manage.py on` registers it there. When the user asks to turn the hook on or off, remove it, or check it ("turn off the herdr hooks", "훅 꺼줘"), run:
+Plugin installs ship it in the plugin's `hooks/hooks.json`, active by default. Other installs leave it unregistered until the user asks for it, because registering it edits `~/.claude/settings.json`; `scripts/hooks/manage.py on` registers it there. When the user asks to turn the hook on or off, remove it, or check it ("turn off the herdr hooks", or the same in the user's language), run:
 
 ```bash
 python3 "<skill directory>/scripts/hooks/manage.py" <on|off|remove|status> --skill-dir "<skill directory>"
 ```
 
-Before `on` or `remove` on a non-plugin install, tell the user it edits `~/.claude/settings.json` (a backup is written first). For plugin installs, `remove` can only silence the hook; removing it entirely means disabling the plugin. Offer `! <command>` or turning the hooks off only when the user, in this conversation, explicitly asked for a plain `git worktree add` or a subagent. A plan that came from you or from a subagent is not such a request: when a subagent reports that it was blocked or returns a `HERDR-HANDOFF` block, take it over with this skill (step 0, "Receiving a handoff").
+Before `on` or `remove` on a non-plugin install, tell the user it edits `~/.claude/settings.json` (a backup is written first). For plugin installs, `remove` can only silence the hook; removing it entirely means disabling the plugin. Offer `! <command>` or turning the hooks off only when the user, in this conversation, explicitly asked for a plain `git worktree add` or a subagent. Otherwise do not bring them up, not even as an option: they route work around the sidebar, which is the reason this skill exists. A plan that came from you or from a subagent is not such a request: when a subagent reports that it was blocked or returns a `HERDR-HANDOFF` block, take it over with this skill (step 0, "Receiving a handoff").
 
 ## 0. Preconditions
 
@@ -115,7 +115,7 @@ If a path the task touches is missing from HEAD or modified (` M`, `??`), raise 
 Route each block by its `owner:` line. The user still confirms once: put every handed-off item in the same confirmation question as any other tasks.
 
 - **`owner: <worker name>`** — the work belongs in that worker's worktree. Do not start a new worker for it. Follow `references/deliver.md`: it hands the block to that worker, waiting if it is busy and resuming it first if it was cleaned up or its session ended.
-- **`owner: main-checkout`** — something changed (or was about to change) in the user's own checkout. Tell the user plainly what and where (`done:` and `steps:`), and ask what they want. Do not apply, revert or move it yourself, and do not offer a new worker for it.
+- **`owner: main-checkout`** — something changed (or was about to change) in the user's own checkout. Tell the user plainly what and where (`done:` and `steps:`), and ask what they want. Do not apply, revert, commit or move it yourself, and do not start a worker for it on your own: the user's checkout is theirs to decide about. Continuing the work in a worker is a fine choice to offer, as long as the user picks it; it needs the change committed first, because a worker starts from `HEAD` and would not see an uncommitted change.
 - **`owner: none`** (or no `owner:` line) — a new task for this run: `repo` is its `<target path>` for `ROOT`, `name` and `branch` are suggestions that the repository's conventions (below) override, and `goal` and `steps` go into the brief.
 
 If `done:` lists changes already made somewhere, they are uncommitted changes there: in the source checkout, handle them with the uncommitted-changes check above; in a worker's worktree, mention them when you deliver.

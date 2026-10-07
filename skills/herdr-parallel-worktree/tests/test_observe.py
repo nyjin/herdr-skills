@@ -37,14 +37,14 @@ class ParseStatusTest(unittest.TestCase):
         data = ("1 .M N... 100644 100644 100644 aaa bbb dir/with space.py\0"
                 "2 R. N... 100644 100644 100644 aaa bbb R100 new name.py\0old name.py\0"
                 "u UU N... 100644 100644 100644 100644 a b c conflict.py\0"
-                "? 한글/새 파일.txt\0"
+                "? naïve/ünïcode 文件.txt\0"
                 "! ignored.log\0"
                 "# branch.oid abc\0"
                 "1 .D N... 100644 100644 000000 aaa aaa gone.py\0"
                 "1 D. N... 100644 000000 000000 aaa 000 staged-gone.py\0")
         self.assertEqual(observe.parse_status_v2_z(data), [
             ("dir/with space.py", False), ("new name.py", False), ("conflict.py", False),
-            ("한글/새 파일.txt", False), ("gone.py", True), ("staged-gone.py", True)])
+            ("naïve/ünïcode 文件.txt", False), ("gone.py", True), ("staged-gone.py", True)])
 
     def test_rename_consumes_its_original_path(self):
         data = "2 R. N... 100644 100644 100644 a b R100 to.py\x00from.py\x00? after.txt\x00"

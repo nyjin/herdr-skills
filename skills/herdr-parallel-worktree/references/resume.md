@@ -1,6 +1,6 @@
 # Resuming a worker
 
-Use when the user asks to bring back a worker — "resume proj-101", "proj-101 다시 열어줘", "continue the payments worker". It works for workers that were cleaned up (`references/cleanup.md`) and for open workers whose agent has exited.
+Use when the user asks to bring back a worker — "resume proj-101", "reopen proj-101", "continue the payments worker" (in any language). It works for workers that were cleaned up (`references/cleanup.md`) and for open workers whose agent has exited.
 
 This document gives clues and a way of working, not a per-agent recipe. Agents and their options change faster than any table could be kept current, so work out how to resume the agent in front of you, confirm it on the installed version, and check that it actually worked.
 

@@ -7,7 +7,7 @@ Cleaning up removes the worktree and closes its workspace. The branch, the brief
 ## When
 
 - **Before starting new workers (step 0)**: scan, and offer the candidates in the same confirmation question as the new tasks. Never clean up without that confirmation.
-- **On request**: "clean up finished worktrees", "정리해줘". Scan and confirm the same way.
+- **On request**: "clean up finished worktrees", "tidy up the old workers" (in any language). Scan and confirm the same way.
 
 ## 1. Scan
 
