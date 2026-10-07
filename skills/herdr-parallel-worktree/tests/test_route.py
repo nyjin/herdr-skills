@@ -163,6 +163,7 @@ class MessageTest(unittest.TestCase):
 
 import subprocess
 import tempfile
+import time
 from unittest import mock
 
 
@@ -172,7 +173,7 @@ class WriteRuleTest(unittest.TestCase):
                           ("NotebookEdit", "notebook_path")):
             with self.subTest(tool=tool):
                 out = route.decide(event(tool, sub=True, **{key: "/w/b/f.py"}), MAIN_ENV, fake_probe)
-                self.assertEqual(reason(out), route.deny_sub(("none", None, "/w/b")))
+                self.assertEqual(reason(out), route.deny_sub(("none", None, "/w/b"), "/r"))
 
     def test_sub_bash_is_judged_after_it_runs_not_before(self):
         # R5 (reading cd / git -C targets) is gone: Bash writes are judged by their results (R7, PostToolUse)
@@ -229,19 +230,20 @@ class GitProbeTest(unittest.TestCase):
         wt_real = os.path.realpath(self.wt)
         out = route.decide(event("Write", sub=True, cwd=os.path.realpath(self.repo),
                                  file_path=os.path.join(self.wt, "f.py")), MAIN_ENV)
-        self.assertEqual(reason(out), route.deny_sub(("none", None, wt_real)))
+        self.assertEqual(reason(out), route.deny_sub(("none", None, wt_real), os.path.realpath(self.repo)))
         self.assertIsNone(route.decide(event("Write", sub=True, cwd=wt_real,
                                              file_path=os.path.join(self.wt, "f.py")), MAIN_ENV))
 
     def test_new_file_in_missing_dir_of_other_worktree(self):
         path = os.path.join(self.wt, "new", "deeper", "f.py")
         out = route.decide(event("Write", sub=True, cwd=self.repo, file_path=path), MAIN_ENV)
-        self.assertEqual(reason(out), route.deny_sub(("none", None, os.path.realpath(self.wt))))
+        self.assertEqual(reason(out), route.deny_sub(("none", None, os.path.realpath(self.wt)), os.path.realpath(self.repo)))
 
     def test_worker_write_into_real_main_checkout(self):
         out = route.decide(event("Write", cwd=self.wt, file_path=os.path.join(self.repo, "f.py")), WORKER_ENV)
         self.assertEqual(reason(out), route.deny_worker_write(
-            "w1", os.path.realpath(self.wt), ("main-checkout", None, os.path.realpath(self.repo))))
+            "w1", os.path.realpath(self.wt), ("main-checkout", None, os.path.realpath(self.repo)),
+            os.path.realpath(self.repo)))
 
     def test_outside_git_is_none(self):
         self.assertIsNone(route.git_probe(os.path.join(self.tmp, "f.py")))
@@ -359,6 +361,7 @@ class SpecMatrixTest(unittest.TestCase):
             return "NOTE"
         own = ("none", None, "/w/b")
         return {route.DENY_MAIN: "MAIN", route.DENY_SUB: "SUB", route.deny_sub(own): "SUB",
+                route.deny_sub(own, "/r"): "SUB",
                 route.deny_worker_create("w1", "/w/a"): "WORKER",
                 route.deny_worker_write("w1", "/w/a", own): "WORKER_WRITE"}.get(hso.get("permissionDecisionReason"), "OTHER")
 
@@ -406,8 +409,8 @@ class R4OwnerMatrixTest(unittest.TestCase):
                "worker": (False, "/w/a", WORKER_ENV), "worker-sub": (True, "/w/a", WORKER_ENV)}
 
     def expected(self, who, target):
-        sub_deny = lambda own: route.deny_sub(own)
-        wk_deny = lambda own: route.deny_worker_write("w1", "/w/a", own)
+        sub_deny = lambda own: route.deny_sub(own, "/r")
+        wk_deny = lambda own: route.deny_worker_write("w1", "/w/a", own, "/r")
         table = {
             "main":       {"home": None, "worker": None, "main": None, "none": None, "out": None},
             "sub":        {"home": None, "worker": sub_deny(self.WORKER), "main": None,
@@ -432,7 +435,7 @@ class R4OwnerMatrixTest(unittest.TestCase):
 
     def test_relative_path_resolves_against_cwd(self):
         out = decide_fake(event("Edit", cwd="/w/a", file_path="../b/f.py"), WORKER_ENV, self.RUNS)
-        self.assertEqual(reason(out), route.deny_worker_write("w1", "/w/a", self.WORKER))
+        self.assertEqual(reason(out), route.deny_worker_write("w1", "/w/a", self.WORKER, "/r"))
 
 
 class ObserveDecideTest(unittest.TestCase):
@@ -491,7 +494,7 @@ class ObserveDecideTest(unittest.TestCase):
     def test_subagent_write_through_bash_is_observed(self):
         self.write_in_b()
         self.assertEqual(self.context(self.post("echo x > /w/b/f.py")),
-                         route.observed("sub", [("/w/b", ("none", None, "/w/b"))], MAIN_ENV, "/r"))
+                         route.observed("sub", [("/w/b", ("none", None, "/w/b"))], MAIN_ENV, "/r", "/r"))
 
     def test_owner_is_named(self):
         self.runs = [{"name": "b", "worktree": "/w/b", "state": "open"}]
@@ -524,9 +527,9 @@ class ObserveDecideTest(unittest.TestCase):
         self.ctimes["/r/x.txt"] = 999.0
         own = [("/r", ("main-checkout", None, "/r"))]
         self.assertEqual(self.context(self.post("echo x > /r/x.txt", sub=False, cwd="/w/a", env=WORKER_ENV)),
-                         route.observed("worker", own, WORKER_ENV, "/w/a"))
+                         route.observed("worker", own, WORKER_ENV, "/w/a", "/r"))
         self.assertEqual(self.context(self.post("echo x > /r/x.txt", sub=True, cwd="/w/a", env=WORKER_ENV)),
-                         route.observed("worker-sub", own, WORKER_ENV, "/w/a"))
+                         route.observed("worker-sub", own, WORKER_ENV, "/w/a", "/r"))
 
     def test_worker_writing_its_own_worktree_is_fine(self):
         self.status["/w/a"] = "? f.py\0"
@@ -593,6 +596,68 @@ class EarlyExitTest(unittest.TestCase):
             for arg in ("post-tool-use-bash", "pre-tool-use"):
                 with self.subTest(payload=payload, arg=arg):
                     self.assertEqual(self.run_route(arg, payload)[0], "")
+
+
+class NestedWorktreeTest(unittest.TestCase):
+    """Final review finding: worker worktrees inside the main checkout (`.worktrees/`, a layout SKILL.md names)
+    must be guarded like any other worktree, by R4 and R7, through the real decide() path."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = os.path.realpath(tempfile.mkdtemp())
+        cls.repo = os.path.join(cls.tmp, "repo")
+        cls.wa = os.path.join(cls.repo, ".worktrees", "a")       # recorded worker `a`
+        cls.wb = os.path.join(cls.repo, ".worktrees", "b")       # unrecorded linked worktree
+        g = ["git", "-c", "user.email=t@example.com", "-c", "user.name=t"]
+        subprocess.run(["git", "init", "-q", cls.repo], check=True)
+        subprocess.run(g + ["-C", cls.repo, "commit", "-q", "--allow-empty", "-m", "i"], check=True)
+        for path, branch in ((cls.wa, "a"), (cls.wb, "b")):
+            subprocess.run(["git", "-C", cls.repo, "worktree", "add", "-q", path, "-b", branch], check=True)
+        cls.runs = [{"name": "a", "worktree": cls.wa, "root": cls.repo, "state": "open"}]
+
+    @classmethod
+    def tearDownClass(cls):
+        subprocess.run(["rm", "-rf", cls.tmp], check=False)
+
+    def test_r4_subagent_write_into_a_nested_worker_worktree_is_denied(self):
+        out = route.decide(event("Write", sub=True, cwd=self.repo, file_path=os.path.join(self.wa, "f.py")),
+                           MAIN_ENV, runs=self.runs)
+        self.assertEqual(reason(out), route.deny_sub(("worker", "a", self.wa), self.repo))
+
+    def test_r4_nested_unrecorded_worktree_is_owner_none(self):
+        out = route.decide(event("Edit", sub=True, cwd=self.repo, file_path=os.path.join(self.wb, "x", "f.py")),
+                           MAIN_ENV, runs=self.runs)
+        self.assertEqual(reason(out), route.deny_sub(("none", None, self.wb), self.repo))
+
+    def test_r4_plain_home_write_still_allowed(self):
+        self.assertIsNone(route.decide(event("Write", sub=True, cwd=self.repo,
+                                             file_path=os.path.join(self.repo, "src", "f.py")), MAIN_ENV, runs=self.runs))
+        # a worker inside .worktrees writing its own tree
+        self.assertIsNone(route.decide(event("Write", cwd=self.wa, file_path=os.path.join(self.wa, "g.py")),
+                                       dict(WORKER_ENV, HERDR_PW_WORKER="a"), runs=self.runs))
+
+    def test_r7_subagent_bash_into_a_nested_worker_worktree_is_observed(self):
+        bgdir = tempfile.mkdtemp()
+        target = os.path.join(self.wa, "r7.txt")
+        start = time.time()
+        with open(target, "w") as f:
+            f.write("x")
+        e = event("Bash", sub=True, cwd=self.repo, hook="PostToolUse", command=f"echo x > {target}")
+        e["duration_ms"] = (time.time() - start) * 1000
+        deps = route.real_deps(MAIN_ENV, route.git_probe)._replace(runs=lambda: self.runs,
+                                                                     bg=route.observe.BgStore(bgdir))
+        out = route.decide(e, MAIN_ENV, deps=deps)
+        subprocess.run(["rm", "-rf", bgdir], check=False)
+        self.assertIsNotNone(out)
+        ctx = out["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("worker `a`", ctx)
+        self.assertIn(f"\nrepo: {self.repo}\n", ctx)
+
+    def test_handoff_repo_is_filled_for_a_worker_owner(self):
+        # the block must name the worker's repository, not the worktree a subagent would copy from the message
+        out = route.decide(event("Write", sub=True, cwd=self.repo, file_path=os.path.join(self.wa, "f.py")),
+                           MAIN_ENV, runs=self.runs)
+        self.assertIn(f"\nrepo: {self.repo}\n", reason(out))
 
 
 if __name__ == "__main__":

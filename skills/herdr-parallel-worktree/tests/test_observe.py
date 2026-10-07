@@ -79,6 +79,17 @@ class MentionedPathsTest(unittest.TestCase):
         got = observe.mentioned_paths(["cat ~/notes.txt"], "/r", "/r", realpath=ident)
         self.assertEqual(got, [os.path.expanduser("~/notes.txt")])
 
+    def test_path_in_a_worktree_nested_inside_home_is_a_mention(self):
+        tmp = os.path.realpath(tempfile.mkdtemp())
+        try:
+            nested = os.path.join(tmp, ".worktrees", "a")
+            os.makedirs(nested)
+            open(os.path.join(nested, ".git"), "w").write("gitdir: elsewhere\n")   # a linked worktree's root
+            got = observe.mentioned_paths([f"echo x > {nested}/f.py && ls {tmp}/src"], tmp, tmp)
+            self.assertEqual(got, [os.path.join(nested, "f.py")])
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
     def test_home_paths_and_plain_words_are_not_mentions(self):
         self.assertEqual(self.mp("echo hi > out.txt && ls src"), [])          # relative inside home
         self.assertEqual(self.mp("cat /r/README.md"), [])                     # absolute inside home
@@ -106,6 +117,16 @@ class CandidatesTest(unittest.TestCase):
         got = observe.candidates(["/r/.worktrees/x/f"], [], writer_wts=["/r/.worktrees/x"], writer_main="/r",
                                  home="/w/a")
         self.assertEqual(got, [("/r/.worktrees/x", ("none", None, "/r/.worktrees/x"))])
+
+    def test_worktree_nested_inside_home_is_a_candidate(self):
+        got = observe.candidates(["/r/.worktrees/a/f"], [{"name": "a", "worktree": "/r/.worktrees/a"}],
+                                 writer_wts=["/r/.worktrees/a"], writer_main=None, home="/r")
+        self.assertEqual(got, [("/r/.worktrees/a", ("worker", "a", "/r/.worktrees/a"))])
+
+    def test_path_in_home_is_not_given_to_a_worktree_that_contains_home(self):
+        # a worker in /r/.worktrees/x writing its own file must not be blamed on the main checkout /r
+        self.assertEqual(observe.candidates(["/r/.worktrees/x/f"], [], writer_wts=["/r/.worktrees/x"],
+                                            writer_main="/r", home="/r/.worktrees/x"), [])
 
     def test_home_is_never_a_candidate(self):
         self.assertEqual(observe.candidates(["/w/a/f"], [], writer_wts=["/w/a"], writer_main="/r", home="/w/a"), [])

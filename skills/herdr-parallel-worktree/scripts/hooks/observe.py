@@ -54,6 +54,21 @@ def tokens(text):
         return [t.strip("'\"") for t in SPLIT.split(text) if t]
 
 
+def nested_root(path, home):
+    """The root of another worktree nested inside `home` that holds `path` (a directory with a `.git` file, as every
+    linked worktree has), or None. Plain stat calls, no git: `.worktrees/<name>` inside a main checkout is a
+    supported layout, and a path there is not the main checkout's own."""
+    d = path if os.path.isdir(path) else os.path.dirname(path)
+    while d != home and owners.inside(d, home):
+        if os.path.isfile(os.path.join(d, ".git")):
+            return d
+        parent = os.path.dirname(d)
+        if parent == d:
+            break
+        d = parent
+    return None
+
+
 def mentioned_paths(texts, cwd, home, realpath=os.path.realpath):
     """Resolved paths named in the command texts that lie outside `home`. A path is a token (or the value after
     `=` in `D=/x` or `--work-tree=/x`) that contains `/` or starts with `~`; relative ones resolve against cwd.
@@ -65,7 +80,7 @@ def mentioned_paths(texts, cwd, home, realpath=os.path.realpath):
                 if not part or "$" in part or not ("/" in part or part.startswith("~")):
                     continue
                 p = realpath(os.path.normpath(os.path.join(cwd, os.path.expanduser(part))))
-                if (home is None or not owners.inside(p, home)) and p not in out:
+                if (home is None or not owners.inside(p, home) or nested_root(p, home)) and p not in out:
                     out.append(p)
     return out
 
@@ -82,10 +97,11 @@ def candidates(paths, runs, writer_wts, writer_main, home):
     for r in runs:
         watched[r["worktree"]] = ("worker", r["name"], r["worktree"])
     watched.pop(home, None)
-    out = []
+    pool = list(watched) + [home]                   # home competes too: a path whose innermost worktree is home is not
+    out = []                                         # given to a worktree that merely contains home
     for p in paths:
-        best = max((wt for wt in watched if owners.inside(p, wt)), key=len, default=None)
-        if best and best not in [w for w, _ in out] and not owners.inside(best, home):
+        best = max((wt for wt in pool if owners.inside(p, wt)), key=len, default=None)
+        if best and best != home and best not in [w for w, _ in out]:
             out.append((best, watched[best]))
     return out
 
@@ -295,7 +311,7 @@ def observe(event, env, deps):
 
     def check(item):
         wt, own = item
-        exclude = [home_top] + [x for x in watched if x != wt and owners.inside(x, wt)]
+        exclude = [x for x in watched | {home_top} if x != wt and owners.inside(x, wt)]   # worktrees nested in wt
         here = [p for p in paths if owners.inside(p, wt)]
         return changed(wt, status_entries(wt, deps.git), deps.lstat, win, exclude,
                        git_state_paths(wt, deps.git), here)

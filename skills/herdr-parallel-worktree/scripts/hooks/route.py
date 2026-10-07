@@ -51,7 +51,7 @@ def owner_label(owner):
     return owner[1] if owner[0] == "worker" else owner[0]
 
 
-def handoff(owner):
+def handoff(owner, repo=None):
     """The block a subagent or worker ends with; the main session routes it by its `owner:` line."""
     return ("HERDR-HANDOFF\n"
             f"To the main session: load the {SKILL} skill and handle this by its `owner:` line (step 0, "
@@ -59,7 +59,7 @@ def handoff(owner):
             "worker for `none`, confirming with the user once. Do not tell the user to run it with `!` or to "
             "turn the hooks off.\n"
             "name: <suggested worker name>\n"
-            "repo: <absolute path of the target repository>\n"
+            f"repo: {repo or '<absolute path of the target repository>'}\n"
             f"owner: {owner_label(owner)}\n"
             "goal: <one line>\n"
             "branch: <suggested branch, or ->\n"
@@ -92,12 +92,12 @@ DENY_MAIN = (
 )
 
 
-def deny_sub(owner):
+def deny_sub(owner, repo=None):
     return ("You are a subagent. Inside herdr, work outside your own worktree goes back to the main session, which "
             "hands it to the worktree's owner or starts a herdr worker after confirming with the user. "
             f"Do not create a worktree or write into {where(owner)}, and do not retry another way. Do not suggest "
             "running anything with `!` or turning the hooks off. Stop now and end your final reply with this "
-            "block, filled in:\n\n" + handoff(owner))
+            "block, filled in:\n\n" + handoff(owner, repo))
 
 
 DENY_SUB = deny_sub(NEW)
@@ -114,14 +114,14 @@ def deny_worker_create(name, home):
             "filled in, in your `## Result` and let the orchestrator decide:\n\n" + handoff(NEW))
 
 
-def deny_worker_write(name, home, owner):
+def deny_worker_write(name, home, owner, repo=None):
     return (f"You are the herdr worker `{name}`. That file is outside your worktree ({home}): it is in "
             f"{where(owner)}. Do not change it, and do not retry another way. Finish the rest of your task in your "
             "own worktree, and put this block, filled in, in your `## Result` so the orchestrator can pass it "
-            "on:\n\n" + handoff(owner))
+            "on:\n\n" + handoff(owner, repo))
 
 
-def observed(who, hits, env, home):
+def observed(who, hits, env, home, repo=None):
     """R7: what a subagent or worker is told after its Bash command changed worktrees outside its own."""
     changed = "; ".join(where(own) for _, own in hits)
     blocks = "one block per owner" if len({own[:2] for _, own in hits}) > 1 else "this block"
@@ -130,12 +130,12 @@ def observed(who, hits, env, home):
                 f"your worktree ({home}). Do not change anything there again, and do not try to undo it yourself. "
                 "Finish the rest of your task in your own worktree, and put "
                 f"{blocks} in your `## Result`, listing what you changed there under `done:`:\n\n"
-                + handoff(hits[0][1]))
+                + handoff(hits[0][1], repo))
     return ("You are a subagent. Your last command changed " + changed + ", outside your own worktree. Inside "
             "herdr that work goes back to the main session. Do not change anything there again, do not try to "
             "undo it yourself, and do not suggest running anything with `!` or turning the hooks off. Stop now "
             f"and end your final reply with {blocks}, listing what you changed there under `done:`:\n\n"
-            + handoff(hits[0][1]))
+            + handoff(hits[0][1], repo))
 
 
 def real_deps(env, probe):
@@ -222,16 +222,29 @@ def write_target(event, env, probe, runs, main_of):
     home_top, writer_common = os.path.realpath(home[2]), os.path.realpath(home[1])
     writer_main = home_top if home[0] == home[1] else main_of(cwd)
     path = os.path.normpath(os.path.join(cwd, os.path.expanduser(target)))
-    if owners.inside(os.path.realpath(path), home_top):
-        return None
+    rp = os.path.realpath(path)
     if runs is None:
         runs = owners.read_open_runs(owners.runs_path(env))
+    inner = owners.run_owning(rp, runs)
+    if owners.inside(rp, home_top) and not observe.nested_root(rp, home_top) \
+            and not (inner and inner["worktree"] != home_top and owners.inside(inner["worktree"], home_top)):
+        return None                              # home itself, not a worktree nested inside it: no git call
     own = owners.owner_of(path, runs, probe, writer_common, writer_main)
-    if own is None or (who == "sub" and own[0] == "main-checkout"):   # out of scope, or the main session's home
-        return None
+    if own is None or os.path.realpath(own[2]) == home_top or (who == "sub" and own[0] == "main-checkout"):
+        return None                              # out of scope, home, or the main session's home
+    repo = repo_of(own, runs, writer_main)
     if who == "worker":
-        return deny(deny_worker_write(env[WORKER_VAR], home_top, own))
-    return deny(deny_sub(own))
+        return deny(deny_worker_write(env[WORKER_VAR], home_top, own, repo))
+    return deny(deny_sub(own, repo))
+
+
+def repo_of(own, runs, writer_main):
+    """The repository a handoff belongs to: the owning worker's recorded root, else the writer's main checkout."""
+    if own and own[0] == "worker":
+        r = next((r for r in runs if r.get("name") == own[1] and isinstance(r.get("root"), str)), None)
+        if r:
+            return r["root"]
+    return writer_main
 
 
 def decide(event, env, probe=git_probe, runs=None, main_of=owners.main_checkout_of, deps=None):
@@ -242,11 +255,15 @@ def decide(event, env, probe=git_probe, runs=None, main_of=owners.main_checkout_
     if hook in ("PostToolUse", "PostToolUseFailure") and tool == "Bash":
         if who == "main":
             return None
-        hits = observe.observe(event, env, deps or real_deps(env, probe))
+        deps = deps or real_deps(env, probe)
+        hits = observe.observe(event, env, deps)
         if not hits:
             return None
         home = probe(cwd)
-        text = observed(who, hits, env, os.path.realpath(home[2]) if home else cwd)
+        d = deps or real_deps(env, probe)
+        writer_main = (os.path.realpath(home[2]) if home and home[0] == home[1] else d.main_of(cwd)) if home else None
+        repo = repo_of(hits[0][1], d.runs(), writer_main)
+        text = observed(who, hits, env, os.path.realpath(home[2]) if home else cwd, repo)
         return {"hookSpecificOutput": {"hookEventName": hook, "additionalContext": text}}
     if hook == "PostToolUse":
         if tool in ("Agent", "Task") and who == "main":
