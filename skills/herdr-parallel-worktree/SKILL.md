@@ -2,7 +2,7 @@
 name: herdr-parallel-worktree
 license: MIT
 description: >-
-  Run 2+ coding tasks in parallel inside herdr (HERDR_ENV=1), each in its own git worktree with a visible claude worker. Also takes over HERDR-HANDOFF blocks that subagents or workers return, hands follow-up work to existing workers, cleans up or resumes them, and manages the worker brief template and this skill's hooks. Not for use outside herdr.
+  Lets one Claude session run coding work in parallel inside herdr (HERDR_ENV=1) as visible workers: each task gets its own git worktree and its own claude in the herdr sidebar, where the user can watch and step in. Use it when the user wants several tasks, tickets or alternative fixes done at the same time or kept on separate branches, when a subagent or hook hands back a HERDR-HANDOFF block, or to give an existing worker more work, resume it or clean up finished ones; it also manages the worker brief template and its hooks. Not for single edits, explanations, or anything outside herdr.
 ---
 
 # herdr parallel worktree
