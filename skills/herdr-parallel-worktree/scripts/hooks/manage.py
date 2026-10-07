@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Turn herdr-parallel-worktree's routing hooks (PreToolUse, PostToolUse) on or off, or remove them.
+"""Turn herdr-parallel-worktree's routing hooks (PreToolUse, PostToolUse, PostToolUseFailure) on or off, or remove them.
 
 Usage: manage.py <on|off|remove|status> --skill-dir <skill directory as installed>
 
@@ -69,23 +69,26 @@ GUARD = '[ "$HERDR_ENV" = 1 ] || exit 0; '   # outside herdr, never start python
 
 
 def hook_entries(skill_dir):
-    route = f'python3 "{os.path.join(skill_dir, "scripts", "hooks", "route.py")}"'
-    pre = {"type": "command", "command": f"{GUARD}{route} pre-tool-use"}
-    post = {"type": "command", "command": f"{GUARD}{route} post-tool-use"}
+    route = f'python3 -S "{os.path.join(skill_dir, "scripts", "hooks", "route.py")}"'
 
-    def bash(rule):
-        return {"matcher": "Bash", "hooks": [{**pre, "if": rule}]}
+    def group(matcher, arg, rule=None):
+        hook = {"type": "command", "command": f"{GUARD}{route} {arg}"}
+        if rule:
+            hook["if"] = rule
+        return {"matcher": matcher, "hooks": [hook]}
 
     return {
         "PreToolUse": [
-            bash("Bash(*worktree add*)"),
-            bash("Bash(*git -C *)"),
-            bash("Bash(cd *)"),   # also matches `… && cd x`: rules match each subcommand
-            {"matcher": "EnterWorktree|Agent|Task", "hooks": [dict(pre)]},
-            {"matcher": "Write|Edit|MultiEdit|NotebookEdit", "hooks": [dict(pre)]},
+            group("Bash", "pre-tool-use", "Bash(*worktree add*)"),
+            group("EnterWorktree|Agent|Task", "pre-tool-use"),
+            group("Write|Edit|MultiEdit|NotebookEdit", "pre-tool-use-write"),
         ],
         "PostToolUse": [
-            {"matcher": "Agent|Task", "hooks": [dict(post)]},
+            group("Agent|Task", "post-tool-use"),
+            group("Bash", "post-tool-use-bash"),
+        ],
+        "PostToolUseFailure": [
+            group("Bash", "post-tool-use-failure"),
         ],
     }
 

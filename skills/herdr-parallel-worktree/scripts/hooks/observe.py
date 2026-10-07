@@ -20,8 +20,12 @@ import os
 import re
 import shlex
 import time
+from collections import namedtuple
 
 import owners
+
+# What observe() needs from the outside world; tests pass fakes.
+Deps = namedtuple("Deps", "now lstat realpath git probe runs main_of bg")
 
 
 # ---- time window -------------------------------------------------------------------------------------------
@@ -61,7 +65,7 @@ def mentioned_paths(texts, cwd, home, realpath=os.path.realpath):
                 if not part or "$" in part or not ("/" in part or part.startswith("~")):
                     continue
                 p = realpath(os.path.normpath(os.path.join(cwd, os.path.expanduser(part))))
-                if not owners.inside(p, home) and p not in out:
+                if (home is None or not owners.inside(p, home)) and p not in out:
                     out.append(p)
     return out
 
@@ -116,14 +120,11 @@ def parse_status_v2_z(data):
 
 
 def status_entries(wt, git):
-    out = git(["-C", wt, "status", "--porcelain=v2", "-z", "--untracked-files=all"]) if os.path.isdir(wt) else None
-    return parse_status_v2_z(out or "")
+    return parse_status_v2_z(git(["-C", wt, "status", "--porcelain=v2", "-z", "--untracked-files=all"]) or "")
 
 
 def git_state_paths(wt, git):
     """Absolute path of the worktree's logs/HEAD: written on commits, checkouts and resets, never by status."""
-    if not os.path.isdir(wt):
-        return []
     out = git(["-C", wt, "rev-parse", "--path-format=absolute", "--git-path", "logs/HEAD"])
     return [l for l in (out or "").splitlines() if l]
 
@@ -248,3 +249,58 @@ class BgStore:
                         pass
         except Exception:
             pass
+
+
+# ---- the whole judgement -----------------------------------------------------------------------------------
+
+def observe(event, env, deps):
+    """[(worktree, owner)] that this subagent's or worker's finished Bash command changed outside its own
+    worktree; [] when nothing is attributed. A background launch is recorded and judged at the agent's next
+    Bash hook."""
+    if not (event.get("agent_id") or env.get("HERDR_PW_WORKER")):
+        return []
+    worker_side = bool(env.get("HERDR_PW_WORKER"))
+    args = event.get("tool_input") or {}
+    command = args.get("command") if isinstance(args.get("command"), str) else ""
+    session, agent = str(event.get("session_id") or "-"), str(event.get("agent_id") or "self")
+    now = deps.now()
+    deps.bg.gc(now)
+    resp = event.get("tool_response")
+    if isinstance(resp, dict) and resp.get("backgroundTaskId"):
+        deps.bg.add(session, agent, str(resp["backgroundTaskId"]), now, command)
+        return []
+    pending = deps.bg.take(session, agent)
+    cwd = event.get("cwd") or ""
+    texts = [command] + [p["command"] for p in pending]
+    if not cwd or not mentioned_paths(texts, cwd, None, deps.realpath):
+        return []                                     # most commands name no path: stop before any git call
+    home = deps.probe(cwd)
+    if not home:
+        return []
+    home_top = deps.realpath(home[2])
+    paths = mentioned_paths(texts, cwd, home_top, deps.realpath)
+    if not paths:
+        return []
+    win = window(now, event.get("duration_ms"), [p["start"] for p in pending])
+    if not win:
+        return []
+    writer_main = home_top if home[0] == home[1] else deps.main_of(cwd)
+    linked = [e["path"] for e in owners.worktree_list(cwd, deps.git, deps.realpath)
+              if not e["bare"] and e["path"] != writer_main]
+    runs = deps.runs()
+    cands = candidates(paths, runs, linked, writer_main if worker_side else None, home_top)
+    if not cands:
+        return []
+    watched = set(linked) | {r["worktree"] for r in runs} | ({writer_main} if writer_main else set())
+
+    def check(item):
+        wt, own = item
+        exclude = [home_top] + [x for x in watched if x != wt and owners.inside(x, wt)]
+        here = [p for p in paths if owners.inside(p, wt)]
+        return changed(wt, status_entries(wt, deps.git), deps.lstat, win, exclude,
+                       git_state_paths(wt, deps.git), here)
+
+    from concurrent.futures import ThreadPoolExecutor   # only needed once there is something to check
+    with ThreadPoolExecutor(max_workers=min(8, len(cands))) as pool:
+        flags = list(pool.map(check, cands))
+    return [c for c, hit in zip(cands, flags) if hit]

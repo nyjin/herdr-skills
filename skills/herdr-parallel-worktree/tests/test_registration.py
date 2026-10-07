@@ -30,25 +30,42 @@ class RegistrationTest(unittest.TestCase):
         self.assertEqual(normalise(self.plugin, PLUGIN_ROUTE),
                          normalise(self.standalone, '"/SKILL/scripts/hooks/route.py"'))
 
-    def test_every_command_is_guarded_and_names_its_event(self):
+    ARGS = {   # (event, matcher) -> route.py argument
+        ("PreToolUse", "Bash"): "pre-tool-use",
+        ("PreToolUse", "EnterWorktree|Agent|Task"): "pre-tool-use",
+        ("PreToolUse", "Write|Edit|MultiEdit|NotebookEdit"): "pre-tool-use-write",
+        ("PostToolUse", "Agent|Task"): "post-tool-use",
+        ("PostToolUse", "Bash"): "post-tool-use-bash",
+        ("PostToolUseFailure", "Bash"): "post-tool-use-failure",
+    }
+
+    def test_every_command_is_guarded_and_names_its_argument(self):
         for event, groups in self.plugin.items():
-            arg = {"PreToolUse": "pre-tool-use", "PostToolUse": "post-tool-use"}[event]
             for g in groups:
                 for h in g["hooks"]:
                     with self.subTest(event=event, matcher=g["matcher"], cmd=h["command"]):
-                        self.assertTrue(h["command"].startswith(GUARD))
-                        self.assertTrue(h["command"].endswith(" " + arg))
+                        self.assertTrue(h["command"].startswith(GUARD + "python3 -S "))
+                        self.assertTrue(h["command"].endswith(" " + self.ARGS[(event, g["matcher"])]))
 
     def test_expected_matchers(self):
         pre = [(g["matcher"], g["hooks"][0].get("if")) for g in self.plugin["PreToolUse"]]
         self.assertEqual(pre, [
             ("Bash", "Bash(*worktree add*)"),
-            ("Bash", "Bash(*git -C *)"),
-            ("Bash", "Bash(cd *)"),   # also matches `… && cd x`: rules match each subcommand (spec §11 V2)
             ("EnterWorktree|Agent|Task", None),
             ("Write|Edit|MultiEdit|NotebookEdit", None),
         ])
-        self.assertEqual([g["matcher"] for g in self.plugin["PostToolUse"]], ["Agent|Task"])
+        self.assertEqual([g["matcher"] for g in self.plugin["PostToolUse"]], ["Agent|Task", "Bash"])
+        self.assertEqual([g["matcher"] for g in self.plugin["PostToolUseFailure"]], ["Bash"])
+
+    def test_route_accepts_exactly_the_registered_arguments(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("route_args", os.path.join(SKILL_DIR, "scripts", "hooks",
+                                                                                 "route.py"))
+        route = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(route)
+        self.assertEqual(set(route.ALL_ARGS), set(self.ARGS.values()))
+        self.assertEqual(set(route.NON_MAIN_ARGS),
+                         {"pre-tool-use-write", "post-tool-use-bash", "post-tool-use-failure"})
 
     def test_manage_marker_still_finds_every_group(self):
         # strip_ours() finds our groups by MARK ("herdr-parallel-worktree/scripts/hooks/route.py"), so use a

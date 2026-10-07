@@ -2,29 +2,43 @@
 """Claude Code hooks that route worktree work to herdr-parallel-worktree inside herdr.
 
 Usage (from a hooks config):
-  route.py pre-tool-use    PreToolUse: deny creating a worktree outside the skill — `git worktree add`,
-                           EnterWorktree without `path` (which creates one), worktree-isolated Agent calls.
-                           For a subagent, also deny writing into a linked worktree other than the session's
-                           own. The reason depends on who called: the main session is told to use the skill,
-                           a subagent to stop and hand the task back as a HERDR-HANDOFF block, a herdr worker
-                           to do the work itself.
-  route.py post-tool-use   PostToolUse on Agent/Task in the main session: says what to do if that subagent
-                           returns a HERDR-HANDOFF block.
+  route.py pre-tool-use           PreToolUse Bash(worktree add) / EnterWorktree / Agent / Task: deny creating a
+                                  worktree outside the skill (R1-R3). The main session is told to use the skill,
+                                  a subagent to hand the task back as a HERDR-HANDOFF block, a worker to do it itself.
+  route.py pre-tool-use-write     PreToolUse Write/Edit/MultiEdit/NotebookEdit: deny a subagent's or worker's write
+                                  outside its own worktree, naming the target's owner (R4).
+  route.py post-tool-use          PostToolUse Agent/Task in the main session: how to handle a HERDR-HANDOFF (R6).
+  route.py post-tool-use-bash     PostToolUse / PostToolUseFailure Bash: tell a subagent or worker that its command
+  route.py post-tool-use-failure  changed a worktree outside its own (R7, observe.py), so it stops and hands it back.
 
 Who called: HERDR_PW_WORKER (exported by the skill into each worker's pane) marks a herdr worker; `agent_id`
-in the hook input marks a subagent.
+in the hook input marks a subagent. Owners come from DATA_DIR/runs.json (owners.py).
 
 It does nothing — no output, no tokens — outside herdr (HERDR_ENV != 1) or when the user turned the hooks off
 ("hooks": "off" in DATA_DIR/config.json). Any unexpected error also results in no output, so a broken hook
 never blocks the user's work.
 """
-import json
 import os
-import re
-import subprocess
 import sys
 
+# Arguments whose hooks never concern the plain main session (Write/Edit before, Bash after). For them, a run
+# with neither `"agent_id"` in the raw input nor HERDR_PW_WORKER set ends here, before json or git are even
+# imported: these hooks fire on every edit and every Bash command inside herdr.
+NON_MAIN_ARGS = ("pre-tool-use-write", "post-tool-use-bash", "post-tool-use-failure")
+ALL_ARGS = ("pre-tool-use", "post-tool-use") + NON_MAIN_ARGS
+_RAW = None
+if __name__ == "__main__" and len(sys.argv) == 2 and sys.argv[1] in NON_MAIN_ARGS:
+    _RAW = sys.stdin.buffer.read()
+    if b'"agent_id"' not in _RAW and not os.environ.get("HERDR_PW_WORKER"):
+        sys.exit(0)
+
+import json  # noqa: E402
+import re  # noqa: E402
+import subprocess  # noqa: E402
+import time  # noqa: E402
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import observe  # noqa: E402
 import owners  # noqa: E402
 
 SKILL = "herdr-parallel-worktree"
@@ -107,14 +121,36 @@ def deny_worker_write(name, home, owner):
             "on:\n\n" + handoff(owner))
 
 
+def observed(who, hits, env, home):
+    """R7: what a subagent or worker is told after its Bash command changed worktrees outside its own."""
+    changed = "; ".join(where(own) for _, own in hits)
+    blocks = "one block per owner" if len({own[:2] for _, own in hits}) > 1 else "this block"
+    if who == "worker":
+        return (f"You are the herdr worker `{env.get(WORKER_VAR)}`. Your last command changed {changed}, outside "
+                f"your worktree ({home}). Do not change anything there again, and do not try to undo it yourself. "
+                "Finish the rest of your task in your own worktree, and put "
+                f"{blocks} in your `## Result`, listing what you changed there under `done:`:\n\n"
+                + handoff(hits[0][1]))
+    return ("You are a subagent. Your last command changed " + changed + ", outside your own worktree. Inside "
+            "herdr that work goes back to the main session. Do not change anything there again, do not try to "
+            "undo it yourself, and do not suggest running anything with `!` or turning the hooks off. Stop now "
+            f"and end your final reply with {blocks}, listing what you changed there under `done:`:\n\n"
+            + handoff(hits[0][1]))
+
+
+def real_deps(env, probe):
+    import tempfile
+    return observe.Deps(now=time.time, lstat=os.lstat, realpath=os.path.realpath, git=owners.git, probe=probe,
+                        runs=lambda: owners.read_open_runs(owners.runs_path(env)),
+                        main_of=owners.main_checkout_of,
+                        bg=observe.BgStore(os.path.join(tempfile.gettempdir(), "herdr-pw-observe")))
+
+
 # `git [global options] worktree add` in command position (start, or after ; & | ( or $( ), optionally
 # behind VAR=value assignments. Matched against code_only(command), so the phrase inside a commit message, a
 # grep pattern or a heredoc is not a command, and a quoted option value with spaces (`-C "/my repo"`) is one word.
 WORKTREE_ADD = re.compile(r"(?:^|[;&|(\n]|\$\()\s*(?:\w+=\S*\s+)*(?:command\s+)?git\b(?:\s+-\S+(?:\s+[^-\s]\S*)?)*\s+worktree\s+add\b")
 
-# `git -C <dir>` anywhere, or `cd <dir>` in command position. <dir> must be a plain word or a simply quoted
-# one with no variables or substitutions; anything this cannot read for certain is left alone.
-DIR_ARG = re.compile(r"""(?:\bgit\s+-C|(?:^|[;&|(\n])\s*cd)\s+("[^"$`\\]*"|'[^']*'|[^\s;&|()<>$`'"\\]+)(?=[\s;&|)]|$)""")
 WRITE_TOOLS = {"Write": "file_path", "Edit": "file_path", "MultiEdit": "file_path", "NotebookEdit": "notebook_path"}
 QUOTED = re.compile(r"""("[^"]*"|'[^']*')""")
 # A heredoc from `<<WORD` (or <<'WORD', <<-WORD) through the line holding only WORD: its body is data, not commands.
@@ -153,36 +189,6 @@ def git_probe(path):
     if r.returncode != 0 or len(lines) != 3:
         return None
     return lines[0], lines[1], lines[2]
-
-
-def other_worktree(path, cwd, probe):
-    """Toplevel of the linked worktree holding `path`, unless it is the session's own (cwd's); else None."""
-    path = os.path.normpath(os.path.join(cwd, os.path.expanduser(path)))
-    found = probe(path)
-    if not found or found[0] == found[1]:   # unknown, or the main checkout
-        return None
-    home = probe(cwd)
-    if not home or home[2] == found[2]:   # own worktree, or the session's own directory is unknown (fail open)
-        return None
-    return found[2]
-
-
-def dir_targets(command):
-    """Directories that `cd <dir>` or `git -C <dir>` in `command` act on, when they can be read for certain."""
-    # Blank out quoted arguments that are not themselves a cd / git -C target, so a commit message or an
-    # echo that mentions "cd …" is not read as a command.
-    command = HEREDOC.sub("<<HEREDOC", command)
-    out = []
-    for m in DIR_ARG.finditer(command):
-        start = m.start()
-        if any(q.start() < start < q.end() for q in QUOTED.finditer(command)):
-            continue
-        token = m.group(1)
-        if token[:1] in "\"'":
-            token = token[1:-1]
-        if token and token != "-":
-            out.append(os.path.expanduser(token))
-    return out
 
 
 def deny(text):
@@ -228,11 +234,20 @@ def write_target(event, env, probe, runs, main_of):
     return deny(deny_sub(own))
 
 
-def decide(event, env, probe=git_probe, runs=None, main_of=owners.main_checkout_of):
+def decide(event, env, probe=git_probe, runs=None, main_of=owners.main_checkout_of, deps=None):
     hook, tool = event.get("hook_event_name"), event.get("tool_name")
     args = event.get("tool_input") or {}
     who = actor(event, env)
     cwd = event.get("cwd") or os.getcwd()
+    if hook in ("PostToolUse", "PostToolUseFailure") and tool == "Bash":
+        if who == "main":
+            return None
+        hits = observe.observe(event, env, deps or real_deps(env, probe))
+        if not hits:
+            return None
+        home = probe(cwd)
+        text = observed(who, hits, env, os.path.realpath(home[2]) if home else cwd)
+        return {"hookSpecificOutput": {"hookEventName": hook, "additionalContext": text}}
     if hook == "PostToolUse":
         if tool in ("Agent", "Task") and who == "main":
             return {"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": NOTE_HANDOFF}}
@@ -247,9 +262,6 @@ def decide(event, env, probe=git_probe, runs=None, main_of=owners.main_checkout_
         return deny(DENY_SUB)
     if tool in WRITE_TOOLS:
         return write_target(event, env, probe, runs, main_of)
-    if who in ("sub", "worker-sub") and tool == "Bash":   # R5, replaced by observing results in a later task
-        if any(t and other_worktree(t, cwd, probe) for t in dir_targets(args.get("command") or "")):
-            return deny(DENY_SUB)
     return None
 
 
@@ -266,10 +278,10 @@ def enabled():
 
 def main():
     try:
-        if len(sys.argv) != 2 or sys.argv[1] not in ("pre-tool-use", "post-tool-use") or not enabled():
+        if len(sys.argv) != 2 or sys.argv[1] not in ALL_ARGS or not enabled():
             return
         try:
-            event = json.load(sys.stdin)
+            event = json.loads(_RAW if _RAW is not None else sys.stdin.buffer.read())
         except ValueError:
             return
         out = decide(event, os.environ)

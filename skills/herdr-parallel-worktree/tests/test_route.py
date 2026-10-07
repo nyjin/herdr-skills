@@ -166,29 +166,6 @@ import tempfile
 from unittest import mock
 
 
-class DirTargetsTest(unittest.TestCase):
-    def test_reads_plain_and_quoted_targets(self):
-        self.assertEqual(route.dir_targets("cd /w/b && make"), ["/w/b"])
-        self.assertEqual(route.dir_targets("git -C /w/b commit -am x"), ["/w/b"])
-        self.assertEqual(route.dir_targets("true; cd '/w/b' && git -C \"/w/a\" status"), ["/w/b", "/w/a"])
-
-    def test_quoted_cd_target(self):
-        self.assertEqual(route.dir_targets('cd "/p with spaces/wt" && ls'), ["/p with spaces/wt"])
-
-    def test_variable_cd_target_ignored(self):
-        for cmd in ("cd $WT && ls", 'cd "$WT"', "cd foo$bar", "cd $(git rev-parse --show-toplevel)",
-                    "git -C `pwd` status"):
-            with self.subTest(cmd=cmd):
-                self.assertEqual(route.dir_targets(cmd), [])
-
-    def test_cd_inside_commit_message_ignored(self):
-        self.assertEqual(route.dir_targets('git commit -m "cd into the wt first"'), [])
-        self.assertEqual(route.dir_targets("echo 'then git -C /w/b status'"), [])
-
-    def test_home_shortcut_is_expanded(self):
-        self.assertEqual(route.dir_targets("cd ~/w"), [os.path.expanduser("~/w")])
-
-
 class WriteRuleTest(unittest.TestCase):
     def test_sub_write_into_other_worktree_is_denied(self):
         for tool, key in (("Write", "file_path"), ("Edit", "file_path"), ("MultiEdit", "file_path"),
@@ -197,9 +174,10 @@ class WriteRuleTest(unittest.TestCase):
                 out = route.decide(event(tool, sub=True, **{key: "/w/b/f.py"}), MAIN_ENV, fake_probe)
                 self.assertEqual(reason(out), route.deny_sub(("none", None, "/w/b")))
 
-    def test_sub_bash_into_other_worktree_is_denied(self):
-        out = route.decide(event("Bash", sub=True, command="cd /w/b && sed -i s/a/b/ f.py"), MAIN_ENV, fake_probe)
-        self.assertEqual(reason(out), route.DENY_SUB)
+    def test_sub_bash_is_judged_after_it_runs_not_before(self):
+        # R5 (reading cd / git -C targets) is gone: Bash writes are judged by their results (R7, PostToolUse)
+        self.assertIsNone(route.decide(event("Bash", sub=True, command="cd /w/b && sed -i s/a/b/ f.py"),
+                                       MAIN_ENV, fake_probe))
 
     def test_allowed_writes(self):
         allowed = [
@@ -368,7 +346,7 @@ class SpecMatrixTest(unittest.TestCase):
         "R2": ("MAIN", "SUB", "WORKER", "SUB"),
         "R3": ("MAIN", "SUB", "WORKER", "SUB"),
         "R4": (None, "SUB", "WORKER_WRITE", "SUB"),
-        "R5": (None, "SUB", None, "SUB"),
+        "R5": (None, None, None, None),   # removed: Bash writes are judged by R7 after they run
         "R6": ("NOTE", None, None, None),
     }
 
@@ -402,10 +380,6 @@ class ReviewFixTest(unittest.TestCase):
                     "cat <<EOF > notes.md\ngit worktree add ../x\nEOF"):
             with self.subTest(cmd=cmd):
                 self.assertIsNone(route.decide(event("Bash", command=cmd), MAIN_ENV, fake_probe))
-
-    def test_heredoc_body_is_not_a_cd(self):
-        cmd = "cat <<'EOF' > notes.md\ncd /w/b\nEOF"
-        self.assertEqual(route.dir_targets(cmd), [])
 
     def test_commands_after_a_heredoc_still_count(self):
         cmd = "cat <<'EOF' > notes.md\nhello\nEOF\ngit worktree add ../x"
@@ -459,6 +433,166 @@ class R4OwnerMatrixTest(unittest.TestCase):
     def test_relative_path_resolves_against_cwd(self):
         out = decide_fake(event("Edit", cwd="/w/a", file_path="../b/f.py"), WORKER_ENV, self.RUNS)
         self.assertEqual(reason(out), route.deny_worker_write("w1", "/w/a", self.WORKER))
+
+
+class ObserveDecideTest(unittest.TestCase):
+    """R7 through decide(): PostToolUse / PostToolUseFailure on Bash, with fake git, stat and clock."""
+    NOW = 1000.0
+
+    def setUp(self):
+        self.bgdir = tempfile.mkdtemp()
+        self.status = {}          # worktree -> porcelain v2 -z text
+        self.ctimes = {}          # path -> ctime
+        self.runs = []
+
+    def tearDown(self):
+        subprocess.run(["rm", "-rf", self.bgdir], check=False)
+
+    def git(self, args):
+        wt = args[1]
+        if "worktree" in args:
+            return "".join(f"worktree {p}\0HEAD 1\0branch refs/heads/x\0\0" for p in ("/r", "/w/a", "/w/b", "/w/c"))
+        if "status" in args:
+            return self.status.get(wt, "")
+        if "--git-path" in args:
+            return f"/r/.git/worktrees/{os.path.basename(wt)}/logs/HEAD\n"
+        return None
+
+    def lstat(self, path):
+        if path not in self.ctimes:
+            raise FileNotFoundError(path)
+        return os.stat_result((0, 0, 0, 0, 0, 0, 0, 0, 0, self.ctimes[path]))
+
+    def deps(self, now=None):
+        return route.observe.Deps(now=lambda: now or self.NOW, lstat=self.lstat, realpath=lambda p: p, git=self.git,
+                                  probe=fake_probe, runs=lambda: self.runs, main_of=lambda p: "/r",
+                                  bg=route.observe.BgStore(self.bgdir))
+
+    def post(self, command, sub=True, cwd="/r", env=MAIN_ENV, hook="PostToolUse", duration_ms=2000,
+             response=None, now=None):
+        e = event("Bash", sub=sub, cwd=cwd, hook=hook, command=command)
+        if duration_ms is not None:
+            e["duration_ms"] = duration_ms
+        if hook == "PostToolUseFailure":
+            e["error"] = "Exit code 1"
+        else:
+            e["tool_response"] = response or {"stdout": "", "stderr": "", "interrupted": False}
+        return route.decide(e, env, fake_probe, deps=self.deps(now))
+
+    def context(self, out, hook="PostToolUse"):
+        self.assertIsNotNone(out, "expected an observation, got no output")
+        self.assertEqual(out["hookSpecificOutput"]["hookEventName"], hook)
+        return out["hookSpecificOutput"]["additionalContext"]
+
+    def write_in_b(self, ctime=999.0, name="f.py"):
+        self.status["/w/b"] = f"? {name}\0"
+        self.ctimes[f"/w/b/{name}"] = ctime
+
+    def test_subagent_write_through_bash_is_observed(self):
+        self.write_in_b()
+        self.assertEqual(self.context(self.post("echo x > /w/b/f.py")),
+                         route.observed("sub", [("/w/b", ("none", None, "/w/b"))], MAIN_ENV, "/r"))
+
+    def test_owner_is_named(self):
+        self.runs = [{"name": "b", "worktree": "/w/b", "state": "open"}]
+        self.write_in_b()
+        self.assertIn("worker `b`", self.context(self.post("echo x > /w/b/f.py")))
+
+    def test_failure_event(self):
+        self.write_in_b()
+        out = self.post("echo x > /w/b/f.py; false", hook="PostToolUseFailure")
+        self.context(out, "PostToolUseFailure")
+
+    def test_needs_both_a_change_and_a_mention(self):
+        self.write_in_b(ctime=500.0)                                    # changed long before this command
+        self.assertIsNone(self.post("echo x > /w/b/f.py"))
+        self.write_in_b()                                               # changed now, but not mentioned
+        self.assertIsNone(self.post("make all"))
+        self.assertIsNone(self.post("cat /w/b/f.py", duration_ms=None))  # no duration: unknown window
+
+    def test_main_is_never_observed(self):
+        self.write_in_b()
+        self.assertIsNone(self.post("echo x > /w/b/f.py", sub=False))
+
+    def test_subagents_own_worktree_and_main_checkout_are_home(self):
+        self.status["/r"] = "? x.txt\0"
+        self.ctimes["/r/x.txt"] = 999.0
+        self.assertIsNone(self.post("echo x > /r/x.txt"))              # sub of the main session: /r is home
+
+    def test_worker_and_worker_sub(self):
+        self.status["/r"] = "? x.txt\0"
+        self.ctimes["/r/x.txt"] = 999.0
+        own = [("/r", ("main-checkout", None, "/r"))]
+        self.assertEqual(self.context(self.post("echo x > /r/x.txt", sub=False, cwd="/w/a", env=WORKER_ENV)),
+                         route.observed("worker", own, WORKER_ENV, "/w/a"))
+        self.assertEqual(self.context(self.post("echo x > /r/x.txt", sub=True, cwd="/w/a", env=WORKER_ENV)),
+                         route.observed("worker-sub", own, WORKER_ENV, "/w/a"))
+
+    def test_worker_writing_its_own_worktree_is_fine(self):
+        self.status["/w/a"] = "? f.py\0"
+        self.ctimes["/w/a/f.py"] = 999.0
+        self.assertIsNone(self.post("echo x > /w/a/f.py", sub=False, cwd="/w/a", env=WORKER_ENV))
+
+    def test_background_command_is_judged_at_the_next_bash(self):
+        out = self.post("sleep 30; echo x > /w/b/f.py", duration_ms=50,
+                        response={"backgroundTaskId": "bt1", "stdout": ""}, now=900.0)
+        self.assertIsNone(out)                                          # launched: nothing to judge yet
+        self.write_in_b(ctime=930.0)                                    # the background job wrote later
+        ctx = self.context(self.post("true", duration_ms=100, now=1000.0))
+        self.assertIn("/w/b", ctx)
+        self.assertIsNone(self.post("true", duration_ms=100, now=1001.0))   # taken once
+
+    def test_no_path_means_no_git_at_all(self):
+        calls = []
+        deps = self.deps()._replace(git=lambda args: calls.append(("git", args)),
+                                    probe=lambda p: calls.append(("probe", p)) or fake_probe(p))
+        for cmd in ("ls -la", "make test && echo done", "git status"):
+            e = event("Bash", sub=True, hook="PostToolUse", command=cmd)
+            e["duration_ms"] = 100
+            self.assertIsNone(route.decide(e, MAIN_ENV, fake_probe, deps=deps))
+        self.assertEqual(calls, [])
+
+    def test_read_only_mention_is_not_a_write(self):
+        self.ctimes["/w/b/f.py"] = 10.0                                  # exists, untouched
+        self.assertIsNone(self.post("cat /w/b/f.py"))
+
+
+class EarlyExitTest(unittest.TestCase):
+    """Hooks that fire on every edit and every Bash command stop before importing json for the main session."""
+
+    def run_route(self, arg, payload, extra_env=None):
+        env = {k: v for k, v in os.environ.items() if k not in ("HERDR_ENV", "HERDR_PW_WORKER")}
+        env.update({"HERDR_ENV": "1", "HERDR_SKILLS_DATA_HOME": NO_DATA}, **(extra_env or {}))
+        r = subprocess.run([_sys.executable, "-S", "-X", "importtime", ROUTE_PATH, arg], input=payload,
+                           capture_output=True, text=True, env=env, timeout=30)
+        self.assertEqual(r.returncode, 0)
+        imported = {line.split("|")[-1].strip() for line in r.stderr.splitlines() if "|" in line}
+        return r.stdout, imported
+
+    def test_main_session_stops_before_json(self):
+        payload = _json.dumps(event("Bash", hook="PostToolUse", command="echo hi"))
+        for arg in route.NON_MAIN_ARGS:
+            with self.subTest(arg=arg):
+                out, imported = self.run_route(arg, payload)
+                self.assertEqual(out, "")
+                self.assertNotIn("json", imported)
+
+    def test_subagent_or_worker_goes_on(self):
+        sub = _json.dumps(event("Bash", sub=True, hook="PostToolUse", command="echo hi"))
+        self.assertIn("json", self.run_route("post-tool-use-bash", sub)[1])
+        main = _json.dumps(event("Bash", hook="PostToolUse", command="echo hi"))
+        self.assertIn("json", self.run_route("post-tool-use-bash", main, {"HERDR_PW_WORKER": "w1"})[1])
+
+    def test_main_arguments_never_stop_early(self):
+        payload = _json.dumps(event("Agent", prompt="x", isolation="worktree"))
+        out, imported = self.run_route("pre-tool-use", payload)
+        self.assertIn("deny", out)
+
+    def test_empty_or_broken_input(self):
+        for payload in ("", "\x00\xff not json"):
+            for arg in ("post-tool-use-bash", "pre-tool-use"):
+                with self.subTest(payload=payload, arg=arg):
+                    self.assertEqual(self.run_route(arg, payload)[0], "")
 
 
 if __name__ == "__main__":
