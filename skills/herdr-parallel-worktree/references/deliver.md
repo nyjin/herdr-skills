@@ -2,7 +2,7 @@
 
 Use this when a `HERDR-HANDOFF` block names a worker as its `owner:` (SKILL.md step 0, "Receiving a handoff"), or when the user asks to give more work to a worker they already have ("give this to proj-101 too"). The work goes to that worker, in its own worktree; never start a second worker for it.
 
-The user confirms once, in the same question as any other tasks of this run: show the worker's name, the goal and the steps you are about to deliver.
+The user confirms once, in the same question as any other tasks of this run: show the worker's name, the goal and the steps you are about to deliver. When the user asked for exactly this themselves (they named the worker and the work), that request is the confirmation; do not ask again.
 
 ## 1. Find the worker
 
