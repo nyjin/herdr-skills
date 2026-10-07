@@ -72,10 +72,10 @@ npx skills add nyjin/herdr-skills -s herdr-parallel-worktree -a claude-code -g
 
 `herdr-parallel-worktree`는 스킬 설명(description)을 일부러 짧게 둡니다. 설명은 herdr 밖의 세션까지 포함해 모든 Claude Code 세션에 들어가기 때문입니다. 대신 훅이 스킬이 제때 쓰이게 하고, 이 훅들은 herdr 안(`HERDR_ENV=1`)에서만 동작합니다.
 
-- **PreToolUse**: 스킬 밖에서 worktree를 만들려 하면(`git worktree add`, `EnterWorktree`로 새로 만들기, worktree 격리 서브에이전트) 막습니다. 안내는 누가 시도했느냐에 따라 다릅니다. 메인 세션은 스킬로 안내되고, 서브에이전트는 멈춰서 작업을 되돌려 줍니다(`HERDR-HANDOFF` 블록. 메인 세션이 한 번 확인을 받은 뒤 워커로 띄웁니다). 스킬이 띄운 워커는 직접 작업하라는 안내를 받습니다. 서브에이전트가 다른 워커의 worktree에 쓰려 해도 같은 방식으로 멈춥니다. `EnterWorktree`로 이미 있는 worktree에 들어가는 것은 막지 않습니다.
-- **PostToolUse**: 메인 세션이 서브에이전트를 띄우면, 그 서브에이전트가 `HERDR-HANDOFF` 블록을 돌려줄 때 어떻게 할지 한 줄로 알려 줍니다.
+- **PreToolUse**: 스킬 밖에서 worktree를 만들려 하면(`git worktree add`, `EnterWorktree`로 새로 만들기, worktree 격리 서브에이전트) 막습니다. 안내는 누가 시도했느냐에 따라 다릅니다. 메인 세션은 스킬로 안내되고, 서브에이전트는 멈춰서 작업을 `HERDR-HANDOFF` 블록으로 돌려줍니다. 스킬이 띄운 워커는 직접 작업하라는 안내를 받습니다. `EnterWorktree`로 이미 있는 worktree에 들어가는 것은 막지 않습니다. 서브에이전트나 워커가 자기 worktree 밖의 파일을 고치려 해도 같은 방식으로 막고, 그곳의 주인이 누구인지 알려 줍니다.
+- **PostToolUse**: 서브에이전트나 워커가 Bash 명령을 실행한 뒤, 그 명령이 다른 worktree의 경로를 언급했고 실행 중에 그곳이 실제로 바뀌었으면 멈추고 그 부분을 돌려주게 합니다. 읽기만 한 경우는 그대로 둡니다. 메인 세션이 서브에이전트를 띄우면, 돌아온 `HERDR-HANDOFF` 블록을 어떻게 처리할지 한 줄로 알려 줍니다.
 
-훅은 프롬프트 문구가 아니라 도구 호출 자체를 보고 판단합니다. herdr 밖에서는 python을 띄우기 전에 끝납니다.
+모든 handoff에는 **주인(owner)**이 적혀 있고, 메인 세션이 주인에 따라 처리합니다. 그 worktree의 워커가 주인이면 그 워커에게 후속 작업으로 넘깁니다(필요하면 다시 열거나 재개합니다). 사용자의 main checkout이면 무엇이 바뀌었는지 알리고 묻습니다. 주인이 없으면 한 번 확인을 받은 뒤 새 워커를 띄웁니다. 훅은 프롬프트 문구가 아니라 도구 호출과 그 결과를 보고 판단합니다. herdr 밖에서는 python을 띄우기 전에 끝나고, 일반 메인 세션에서는 편집과 Bash마다 도는 훅이 아무 일도 하기 전에 끝납니다.
 
 플러그인은 `hooks/hooks.json`에 이 훅을 담고 있어 기본으로 켜져 있습니다. 스킬만 따로 설치하면 `~/.claude/settings.json`을 고쳐야 하므로, Claude에게 "herdr 훅 켜줘"라고 하기 전에는 등록하지 않습니다(고치기 전에 백업을 남깁니다). 어느 쪽이든 나중에 "herdr 훅 꺼줘"(또는 켜줘, 지워줘)라고 하면 바꿀 수 있습니다.
 
