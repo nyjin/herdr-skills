@@ -3,7 +3,11 @@
 A Bash command is attributed a change in a worktree only when both hold:
   - the command mentions that worktree (a path in its text resolves inside it), and
   - something in that worktree changed while the command ran: a path from `git status`, the parent of a deleted
-    path, or the worktree's logs/HEAD or index has a ctime inside the run's time window.
+    path, a path the command named (or its nearest existing ancestor), or the worktree's logs/HEAD has a ctime
+    inside the run's time window.
+The index is not used: any plain `git status` in that worktree (a worker's status line, say) rewrites it, so it
+would blame a subagent that only read there. A path the command named catches what leaves the status clean
+again (`git restore f`, `git -C wt restore f` through the directory's ctime) without that noise.
 The window comes from the hook's duration_ms, so no "before" snapshot is needed. ctime is used because
 `cp -p`, `rsync -a` and `touch -t` can set mtime to the past, but nothing sets ctime.
 
@@ -117,10 +121,10 @@ def status_entries(wt, git):
 
 
 def git_state_paths(wt, git):
-    """Absolute paths of the worktree's logs/HEAD (commits, checkouts, resets) and index (restore, stash)."""
+    """Absolute path of the worktree's logs/HEAD: written on commits, checkouts and resets, never by status."""
     if not os.path.isdir(wt):
         return []
-    out = git(["-C", wt, "rev-parse", "--path-format=absolute", "--git-path", "logs/HEAD", "--git-path", "index"])
+    out = git(["-C", wt, "rev-parse", "--path-format=absolute", "--git-path", "logs/HEAD"])
     return [l for l in (out or "").splitlines() if l]
 
 
@@ -145,10 +149,19 @@ def existing_ancestor(path, stop, lstat):
     return None
 
 
-def changed(wt, entries, lstat, win, exclude_dirs, git_paths):
+def changed(wt, entries, lstat, win, exclude_dirs, git_paths, mentioned=()):
     """True if anything in worktree `wt` has a ctime inside `win`: a status entry (a deleted one through its
-    nearest existing ancestor), or one of `git_paths`. Entries inside `exclude_dirs` (home, nested worktrees)
-    are skipped."""
+    nearest existing ancestor), a `mentioned` path inside `wt` (or its nearest existing ancestor), or one of
+    `git_paths`. Paths inside `exclude_dirs` (home, nested worktrees) are skipped."""
+    for p in mentioned:
+        if not owners.inside(p, wt) or any(owners.inside(p, ex) for ex in exclude_dirs):
+            continue
+        if ctime_in(p, lstat, win):
+            return True
+        if not os.path.lexists(p):
+            anc = existing_ancestor(p, wt, lstat)
+            if anc and ctime_in(anc, lstat, win):
+                return True
     for rel, deleted in entries:
         full = os.path.join(wt, rel)
         if any(owners.inside(full, ex) for ex in exclude_dirs):

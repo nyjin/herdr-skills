@@ -124,8 +124,9 @@ class FakeStat:
 class ChangedTest(unittest.TestCase):
     WIN = (100.0, 110.0)
 
-    def changed(self, entries, ctimes, exclude=(), git_paths=()):
-        return observe.changed("/w/b", entries, FakeStat(ctimes), self.WIN, list(exclude), list(git_paths))
+    def changed(self, entries, ctimes, exclude=(), git_paths=(), mentioned=()):
+        return observe.changed("/w/b", entries, FakeStat(ctimes), self.WIN, list(exclude), list(git_paths),
+                               list(mentioned))
 
     def test_ctime_inside_and_outside(self):
         self.assertTrue(self.changed([("f.py", False)], {"/w/b/f.py": 105.0}))
@@ -138,7 +139,14 @@ class ChangedTest(unittest.TestCase):
     def test_git_state_paths(self):
         self.assertTrue(self.changed([], {"/r/.git/worktrees/b/logs/HEAD": 101.0},
                                      git_paths=["/r/.git/worktrees/b/logs/HEAD"]))
-        self.assertFalse(self.changed([], {}, git_paths=["/r/.git/worktrees/b/index"]))
+        self.assertFalse(self.changed([], {}, git_paths=["/r/.git/worktrees/b/logs/HEAD"]))
+
+    def test_mentioned_paths_own_ctime(self):
+        # a restored file is clean again (not in status), but the path the command named was rewritten
+        self.assertTrue(self.changed([], {"/w/b/t.txt": 104.0}, mentioned=["/w/b/t.txt"]))
+        self.assertFalse(self.changed([], {"/w/b/t.txt": 90.0}, mentioned=["/w/b/t.txt"]))
+        self.assertTrue(self.changed([], {"/w/b/a": 104.0}, mentioned=["/w/b/a/gone.txt"]))   # nearest ancestor
+        self.assertFalse(self.changed([], {"/w/c/x": 104.0}, mentioned=["/w/c/x"]))           # not in this wt
 
     def test_excluded_nested_worktree(self):
         self.assertFalse(self.changed([(".worktrees/x/f", False)], {"/w/b/.worktrees/x/f": 105.0},
@@ -215,17 +223,18 @@ class RealGitChangedTest(unittest.TestCase):
         subprocess.run(g + ["-C", self.repo, "commit", "-q", "-m", "i"], check=True)
         subprocess.run(["git", "-C", self.repo, "worktree", "add", "-q", self.wt, "-b", "w"], check=True)
         self.g = g
-        time.sleep(1.1)   # so the window below starts after the setup writes, even on 1 s timestamps
+        time.sleep(2.1)   # window starts are floored (up to 1.5 s early): let the setup writes fall before it
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def detect(self, action):
+    def detect(self, action, mentioned=()):
         start = time.time()
         action()
         win = observe.window(time.time(), (time.time() - start) * 1000, [])
         entries = observe.status_entries(self.wt, owners.git)
-        return observe.changed(self.wt, entries, os.lstat, win, [], observe.git_state_paths(self.wt, owners.git))
+        return observe.changed(self.wt, entries, os.lstat, win, [], observe.git_state_paths(self.wt, owners.git),
+                               list(mentioned))
 
     def sh(self, *args):
         subprocess.run(list(args), check=True, capture_output=True)
@@ -253,20 +262,36 @@ class RealGitChangedTest(unittest.TestCase):
     def test_change_before_the_window_is_not_counted(self):
         with open(os.path.join(self.wt, "early.txt"), "w") as f:
             f.write("x")
-        time.sleep(1.1)
+        time.sleep(2.1)
         self.assertFalse(self.detect(lambda: None))
 
     def test_restore_of_a_modified_file(self):
         with open(os.path.join(self.wt, "tracked.txt"), "a") as f:
             f.write("local edit\n")
-        time.sleep(1.1)
-        self.assertTrue(self.detect(lambda: self.sh("git", "-C", self.wt, "restore", "tracked.txt")))
+        time.sleep(2.1)
+        t = os.path.join(self.wt, "tracked.txt")
+        self.assertTrue(self.detect(lambda: self.sh("git", "-C", self.wt, "restore", "--", t), [t]))
+        with open(t, "a") as f:
+            f.write("again\n")
+        time.sleep(2.1)
+        self.assertTrue(self.detect(lambda: self.sh("git", "-C", self.wt, "restore", "tracked.txt"), [self.wt]))
+
+    def test_someone_elses_git_status_is_not_a_change(self):
+        # a plain `git status` in that worktree (a worker's status line, say) rewrites its index every time;
+        # a subagent that only read the worktree must not be blamed for it
+        with open(os.path.join(self.wt, "tracked.txt"), "a") as f:
+            f.write("dirty\n")
+        time.sleep(2.1)
+        read = os.path.join(self.wt, "tracked.txt")
+        self.assertFalse(self.detect(lambda: (open(read).read(),
+                                              self.sh("git", "-C", self.wt, "status")), [read]))
 
     def test_missing_worktree_is_not_changed(self):
         shutil.rmtree(self.wt)
         win = observe.window(time.time(), 1000, [])
         self.assertEqual(observe.status_entries(self.wt, owners.git), [])
-        self.assertFalse(observe.changed(self.wt, [], os.lstat, win, [], observe.git_state_paths(self.wt, owners.git)))
+        self.assertFalse(observe.changed(self.wt, [], os.lstat, win, [], observe.git_state_paths(self.wt, owners.git),
+                                         [os.path.join(self.wt, "f")]))
 
 
 if __name__ == "__main__":
