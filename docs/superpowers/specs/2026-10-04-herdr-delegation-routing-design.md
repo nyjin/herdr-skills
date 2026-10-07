@@ -302,7 +302,12 @@ HANDOFF를 받거나 child의 `## Result`에서 보고를 받으면 `owner`에 �
 - **`owner: main-checkout`**: 무엇이 바뀌었는지(또는 바뀌려 했는지)와 경로를 사용자에게 그대로 알리고 어떻게 할지 묻는다. 메인이 대신 반영하거나 되돌리지 않는다.
 - **`owner: none`**: 기존 흐름대로 새 child를 만든다(확인 1회).
 
-### 13.5 실측 필요
-- **T1:** 살아 있는 워커에 "파일을 가리키는 한 줄"로 후속 지시를 보내면 따르는가(`agent prompt`, 거부 여부).
-- **T2:** `working` 상태의 워커에 보낼 때 기다렸다 보내는 동작과 `agent prompt --wait` 조합.
-- **T3:** 재개한 워커에 후속 지시가 이어지는가(resume 후 대화 맥락 유지).
+### 13.5 실측 결과 (2026-10-07, scratch 워커 `scratch-fix`)
+
+| # | 항목 | 결과 | 반영 |
+|---|---|---|---|
+| T3 | 정리된 워커를 재개한 뒤 후속 지시 | workspace는 닫혔지만 worktree는 남아 있었다 → `herdr worktree open --cwd <root> --path <wt> --label <name>`으로 다시 열고, `export HERDR_PW_WORKER` 후 `agent start … -- <workerArgs> --add-dir <BRIEFS> --resume <session_id>`. 같은 session_id로 돌아왔다. "파일을 가리키는 한 줄"을 `agent prompt --wait`로 보내자, 이전 대화에서 받은 훅 오류 문장을 기억해 정확히 썼다 | 재개 후 전달 가능. resume.md는 "worktree는 남고 workspace만 닫힌 경우"(`worktree open`)를 다뤄야 한다 |
+| T1 | 살아 있는 워커에 한 줄 후속 지시 | 위 재개된 워커와 이후 T2에서 3회 모두 거부 없이 파일을 읽고 따랐다 | deliver.md는 "파일 + 한 줄 `agent prompt`" |
+| T2 | 작업 중인 워커에 보내기 | 25초 반복문 실행 중(21:00:08)에 보냈다. 반복문은 중단 없이 끝났고(21:00:33), 후속 지시는 그 뒤(21:00:38)에 처리됐다. 오류도 거부도 없었다(대기열). `agent wait --until idle --until done` 후 보내는 흐름도 동작했다 | 기본은 대기 후 전달. 대기가 timeout이면 그냥 보내도 대기열로 안전하다 |
+| O8 | 한 에이전트의 병렬 Bash 훅 | 병렬 Bash 2개의 PostToolUse 훅이 같은 시각(±0.01초)에 동시에 실행됐다 | BgStore는 작업별 파일 + rename 소유권 획득(동시성 안전)이어야 한다 |
+| O9 | 메인을 걸러내는 방법의 비용 | 셸 가드(`IN=$(cat)`; bash 3.2): 1KB 12ms, 1MB 58ms, 10MB 467ms. python `-S` 조기 종료(원본 바이트에서 `"agent_id"`를 찾고, 없으면 JSON 파싱 전에 종료): 24 / 33 / 86ms | 셸 가드 대신 python 조기 종료를 쓴다. 최악의 경우가 제한되고, JSON 안 셸 이스케이프가 필요 없다 |
