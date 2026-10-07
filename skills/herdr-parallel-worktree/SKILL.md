@@ -9,7 +9,7 @@ description: >-
 
 The main Claude (this session) is the **orchestrator**. For each task it creates a herdr worktree workspace and starts a `claude` worker there. Each workspace appears in the sidebar under the task name with its status (working, idle, …), so the user can switch between tasks and watch them directly. Do not use the built-in `Agent` subagent: its work is invisible to the user.
 
-**First, before anything else — even a clarifying question — check whether this session is a herdr worker.** If `HERDR_PW_WORKER` is set, this session is a herdr worker started by this skill. Workers never start workers or create worktrees: say so and stop. If the work really needs a separate worker, put a `HERDR-HANDOFF` block in your `## Result` and let the orchestrator decide.
+**First, before anything else — even a clarifying question — check whether this session is a herdr worker.** If `HERDR_PW_WORKER` is set, this session is a herdr worker started by this skill. Workers never start workers or create worktrees: say so and stop. Work outside your own worktree — another worker's worktree, the main checkout, a new worktree — is not yours either: put a `HERDR-HANDOFF` block (with its `owner:` line) in your `## Result` and let the orchestrator pass it on.
 
 ```bash
 test -z "${HERDR_PW_WORKER:-}" || echo "inside worker $HERDR_PW_WORKER: stop"
@@ -64,10 +64,11 @@ This skill's description is kept short on purpose: it sits in every session's co
 
 - **Who is calling** decides the answer. A subagent's tool calls carry an `agent_id`; a herdr worker started by this skill has `HERDR_PW_WORKER=<name>` in its environment (step 3 exports it). Everything else is the main session.
 - **Creating a worktree some other way** — `git worktree add`, `EnterWorktree` without `path`, or an `Agent` with worktree isolation — is denied. The main session is told to use this skill. A subagent is told to stop and return a `HERDR-HANDOFF` block (below). A worker is told to do the work in its own worktree. `EnterWorktree` with `path` only enters an existing worktree (for example, to inspect a worker's worktree) and is allowed.
-- **A subagent writing into another linked worktree** — `Write`/`Edit`/`MultiEdit`/`NotebookEdit` on a file there, or `cd <dir>` / `git -C <dir>` into it — is denied the same way. Its own session's worktree, the main checkout and paths outside git are not affected. The main session itself is never blocked from writing.
-- **After the main session starts a subagent** (PostToolUse), one line of context tells it what to do if that subagent comes back with a `HERDR-HANDOFF` block.
+- **Writing outside one's own worktree** is answered by the **owner** of the target: a worker recorded in `runs.json`, the main checkout, or `none` (a linked worktree nobody owns). A subagent's or worker's `Write`/`Edit`/`MultiEdit`/`NotebookEdit` there is denied before it happens. A subagent of the main session may write to the main checkout (the main session's own). The main session itself is never blocked.
+- **A Bash command that changed another worktree** is caught after it ran (PostToolUse / PostToolUseFailure): when the command names a path in that worktree and something there changed while it ran, the subagent or worker is told to stop and hand it back, with the owner named. Reading another worktree is fine.
+- **After the main session starts a subagent** (PostToolUse), one line of context tells it to handle a returned `HERDR-HANDOFF` block by its `owner:` line.
 
-The hooks decide from the tool call alone, never from prompt wording. Outside herdr a shell guard returns before python starts; inside herdr, Bash hooks run only for commands matching `*worktree add*`, `*git -C *` or `cd`.
+Every handoff carries `owner:`, and step 0 ("Receiving a handoff") routes by it. The hooks decide from tool calls and their effects, never from prompt wording. Outside herdr a shell guard returns before python starts; inside herdr, the hooks that fire on every edit and Bash command return before any work for the main session itself.
 
 Plugin installs ship it in the plugin's `hooks/hooks.json`, active by default. Other installs leave it unregistered until the user asks for it, because registering it edits `~/.claude/settings.json`; `scripts/hooks/manage.py on` registers it there. When the user asks to turn the hook on or off, remove it, or check it ("turn off the herdr hooks", "훅 꺼줘"), run:
 
@@ -98,19 +99,26 @@ If a path the task touches is missing from HEAD or modified (` M`, `??`), raise 
 
 **Offer to clean up finished workers.** Read `references/cleanup.md` and run its scan. If there are candidates, offer them in the same confirmation question as the new tasks; never clean up without that confirmation.
 
-**Receiving a handoff.** A subagent stopped by the hook ends its reply with a block like this:
+**Receiving a handoff.** A subagent stopped by a hook ends its reply with a block like this, and a worker puts one in its `## Result`:
 
     HERDR-HANDOFF
     To the main session: …
     name: <suggested worker name>
     repo: <absolute path of the target repository>
+    owner: <worker name | main-checkout | none>
     goal: <one line>
     branch: <suggested branch, or ->
     steps:
     - <step>
     done: <what was already done, or nothing>
 
-Treat each block as one task for this run: `repo` is that task's `<target path>` for `ROOT`, `name` and `branch` are suggestions that the repository's conventions (below) override, and `goal` and `steps` go into the brief. If `done` lists changes the subagent already made in the source checkout, they are uncommitted changes there: handle them with the uncommitted-changes check above. Ask about handed-off tasks in the same confirmation question as any others, so the user still confirms once. A worker's `## Result` may also contain a block; handle it the same way when you collect results (step 5), after asking the user.
+Route each block by its `owner:` line. The user still confirms once: put every handed-off item in the same confirmation question as any other tasks.
+
+- **`owner: <worker name>`** — the work belongs in that worker's worktree. Do not start a new worker for it. Follow `references/deliver.md`: it hands the block to that worker, waiting if it is busy and resuming it first if it was cleaned up or its session ended.
+- **`owner: main-checkout`** — something changed (or was about to change) in the user's own checkout. Tell the user plainly what and where (`done:` and `steps:`), and ask what they want. Do not apply, revert or move it yourself, and do not offer a new worker for it.
+- **`owner: none`** (or no `owner:` line) — a new task for this run: `repo` is its `<target path>` for `ROOT`, `name` and `branch` are suggestions that the repository's conventions (below) override, and `goal` and `steps` go into the brief.
+
+If `done:` lists changes already made somewhere, they are uncommitted changes there: in the source checkout, handle them with the uncommitted-changes check above; in a worker's worktree, mention them when you deliver.
 
 Put the task list together and **get the user's confirmation once**. For each task decide:
 
@@ -240,6 +248,8 @@ git -C "$WT" diff --stat "$BASE"
 
 Report a table per task: `name | branch | commits | change summary | tests | open issues`. If `## Result` is cut off on screen, raise `--lines`. If it still does not show, ask the worker to write its result to a temp file and reply with only the path, then read that file.
 
+If a `## Result` contains `HERDR-HANDOFF` blocks, route them exactly as in step 0, "Receiving a handoff", asking the user once for all of them.
+
 ## 6. Clean up and resume
 
 The default is to **leave everything in place**: the user decides on push, PR and merge after reviewing each workspace.
@@ -255,7 +265,8 @@ Cleanup keeps branches. Delete a branch only when the user asks, after merging.
 - `herdr server stop`, or killing herdr processes
 - Answer a worker's approval or confirmation dialog
 - Substitute an `Agent` subagent
-- Send the first instructions with `agent prompt`. They arrive as pasted text and the worker may refuse them
+- Send the first instructions with `agent prompt`. They arrive as pasted text and the worker may refuse them. Later instructions go as a file plus one line pointing to it (`references/deliver.md`)
 - Have workers push or open pull requests
 - Start workers or create worktrees from inside a worker (`HERDR_PW_WORKER` set)
 - Tell the user to run a blocked command with `!` or to turn the hooks off because a subagent hit the hook; take its handoff over instead
+- Start a new worker for work whose handoff names an existing worker as `owner:`; deliver it to that worker

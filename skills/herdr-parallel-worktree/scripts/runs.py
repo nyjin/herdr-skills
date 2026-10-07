@@ -9,6 +9,7 @@ Usage:
   runs.py scan --root ROOT [--fetch]      classify open runs of ROOT: candidates, keep, stale (JSON)
   runs.py mark-cleaned --root ROOT --name N [--session-id SID]
   runs.py mark-open --root ROOT --name N --workspace W --pane P
+  runs.py relocate --root ROOT --name N --workspace W --pane P   an open run reopened in a new workspace
   runs.py show --root ROOT [--name N]     print runs (JSON)
 
 It records clues, not procedures: which agent herdr saw in the pane and the session reference herdr's
@@ -262,6 +263,20 @@ def cmd_mark_open(a):
     print(json.dumps(r, ensure_ascii=False))
 
 
+def cmd_relocate(a):
+    """An open run whose workspace was closed and reopened (herdr worktree open) lives in a new workspace and pane."""
+    runs = load()
+    r = find(runs, norm_root(a.root), a.name, "open")
+    if not r:
+        die(f"no open run named {a.name}")
+    r.update(workspace=a.workspace, pane=a.pane)
+    sess = current_session(a.pane)
+    if sess and sess.get("value"):
+        r.update(session_fields(sess))
+    save(runs)
+    print(json.dumps(r, ensure_ascii=False))
+
+
 def cmd_show(a):
     root = norm_root(a.root)
     runs = [r for r in load() if r["root"] == root and (a.name is None or r["name"] == a.name)]
@@ -280,10 +295,12 @@ def main():
     s.add_argument("--session-id"); s.add_argument("--agent")
     s = sub.add_parser("mark-open"); s.add_argument("--root", required=True); s.add_argument("--name", required=True)
     s.add_argument("--workspace", required=True); s.add_argument("--pane", required=True)
+    s = sub.add_parser("relocate"); s.add_argument("--root", required=True); s.add_argument("--name", required=True)
+    s.add_argument("--workspace", required=True); s.add_argument("--pane", required=True)
     s = sub.add_parser("show"); s.add_argument("--root", required=True); s.add_argument("--name")
     a = p.parse_args()
     {"add": cmd_add, "scan": cmd_scan, "mark-cleaned": cmd_mark_cleaned,
-     "mark-open": cmd_mark_open, "show": cmd_show}[a.cmd](a)
+     "mark-open": cmd_mark_open, "relocate": cmd_relocate, "show": cmd_show}[a.cmd](a)
 
 
 if __name__ == "__main__":

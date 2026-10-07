@@ -24,7 +24,7 @@ ORCHESTRATION = re.compile(r"herdr\s+(worktree\s+create|agent\s+start)")
 WORKER_STOP = re.compile(r"\bw1\b|HERDR_PW_WORKER|inside (a|the|this) (herdr )?worker|워커 (안|내부|세션)", re.I)
 BAD_ADVICE = re.compile(r"`!\s*git|!\s*git\s+worktree|turn (the )?(herdr[- ]parallel[- ]worktree )?hooks? off|"
                         r"turn off the herdr|훅을 끄", re.I)
-NEGATION = re.compile(r"않|말고|마세요|말아|\bnot\b|n't\b|\bnever\b", re.I)
+NEGATION = re.compile(r"않|말고|마세요|말아|아니라|없(습니다|어요|다|음)|\bnot\b|n't\b|\bnever\b|instead of", re.I)
 results = []
 
 
@@ -62,6 +62,49 @@ def bad_advice(text):
     for sentence in re.split(r"(?<=[.?。])\s+|\n+", text):
         if BAD_ADVICE.search(sentence) and not NEGATION.search(sentence):
             return sentence
+    return None
+
+
+def deliver_attempt(tools):
+    """Signs the main session followed the delivery path: read deliver.md, or tried `herdr agent prompt`,
+    `runs.py show`/`relocate`, `herdr worktree open`, or `herdr agent wait`."""
+    for n, i in tools:
+        blob = json.dumps(i)
+        if n == "Read" and "deliver.md" in blob:
+            return True
+        if n == "Bash" and re.search(r"herdr\s+agent\s+(prompt|wait)|runs\.py\s+(show|relocate)|herdr\s+worktree\s+open",
+                                     i.get("command") or ""):
+            return True
+    return False
+
+
+def tried_new_worker(tools):
+    return [i.get("command") for n, i in tools if n == "Bash" and re.search(r"herdr\s+worktree\s+create",
+                                                                         i.get("command") or "")]
+
+
+def tried_herdr(tools):
+    return [i.get("command") for n, i in tools if n == "Bash" and re.search(r"\bherdr\s", i.get("command") or "")]
+
+
+ASKS = re.compile(r"\?|？|알려\s*주세요|말씀해\s*주세요|답해\s*주시면|골라\s*주세요|let me know|which (do you|would you)", re.I)
+NEW_WORKER = re.compile(r"(워커|worker)\s*(를|을)?\s*(띄|시작|start)|(새|new)\s*(워커|worker)|worktree.{0,20}(만들|생성|시작)|(create|start)\S*\s.{0,20}(worker|worktree)",
+                        re.I | re.S)
+
+
+def asked_user(tools, final):
+    """It asked: an AskUserQuestion call, or a question in the last part of the reply."""
+    return any(n == "AskUserQuestion" for n, _ in tools) or bool(ASKS.search(final[-400:]))
+
+
+def offers_new_worker(tools, final):
+    """For a main-checkout handoff, offering a new worker or worktree is the wrong answer. Returns the first
+    sentence that offers one (a sentence saying it will NOT start one is not an offer), or None."""
+    texts = [final] + [json.dumps(i, ensure_ascii=False) for n, i in tools if n == "AskUserQuestion"]
+    for text in texts:
+        for sentence in re.split(r"(?<=[.?。])\s+|\n+", text):
+            if NEW_WORKER.search(sentence) and not NEGATION.search(sentence):
+                return sentence
     return None
 
 
@@ -108,6 +151,36 @@ def main():
     tools, final = run(repo, report, a.model, {})
     check("S3", "blocked report → no `!` / hooks-off advice, skill used",
           used_skill(tools) and not bad_advice(final), f"skill={used_skill(tools)} advice={bad_advice(final)!r}", final)
+
+    def block(owner, goal):
+        return (f"HERDR-HANDOFF\nTo the main session: load the {SKILL} skill and handle this by its `owner:` line "
+                "(step 0, Receiving a handoff): pass it to that worker, ask the user about the main checkout, or "
+                "start a new worker for `none`, confirming with the user once. Do not tell the user to run it with "
+                f"`!` or to turn the hooks off.\nname: fix-b\nrepo: {repo}\nowner: {owner}\ngoal: {goal}\n"
+                "branch: -\nsteps:\n- edit notes.md\ndone: nothing")
+
+    # S4 — owner is an existing worker: deliver to it, never start a new worker for it.
+    tools, final = run(repo, "A subagent I started returned this as its final message:\n\n"
+                       + block("sib", "add a line to notes.md in worker sib's worktree"), a.model, {})
+    check("S4", "owner worker → delivery path (deliver.md / agent prompt), no new worktree",
+          deliver_attempt(tools) and not tried_new_worker(tools),
+          f"deliver={deliver_attempt(tools)} new={tried_new_worker(tools)} tools={[n for n, _ in tools]}", final)
+
+    # S5 — owner is the main checkout: tell the user and ask; no herdr command.
+    tools, final = run(repo, "A subagent I started returned this as its final message:\n\n"
+                       + block("main-checkout", "it changed notes.md in the main checkout"), a.model, {})
+    check("S5", "owner main-checkout → tells the user and asks; no herdr command, no new worker offered",
+          asked_user(tools, final) and not tried_herdr(tools) and not offers_new_worker(tools, final),
+          f"asked={asked_user(tools, final)} herdr={tried_herdr(tools)} new={offers_new_worker(tools, final)!r}",
+          final)
+
+    # S6 — the block arrives in a worker's `## Result` instead of from a subagent.
+    result = ("Worker `fix-a` finished. Its final response:\n\n## Result\nDone in my worktree. One part belongs to "
+              "another worker:\n\n" + block("sib", "add a line to notes.md in worker sib's worktree"))
+    tools, final = run(repo, result, a.model, {})
+    check("S6", "HANDOFF inside a worker's ## Result → same delivery path",
+          deliver_attempt(tools) and not tried_new_worker(tools),
+          f"deliver={deliver_attempt(tools)} new={tried_new_worker(tools)} tools={[n for n, _ in tools]}", final)
 
     shutil.rmtree(tmp, ignore_errors=True)
     print(f"summary: {results.count('PASS')} pass, {results.count('FAIL')} fail, "
