@@ -44,6 +44,12 @@ def event(tool, sub=False, cwd="/r", hook="PreToolUse", **tool_input):
     return e
 
 
+def fake_refs(repo, name):
+    """Whether `git worktree add <path> <name>` in `repo` would check out or create a branch: in the fake layout
+    `main` and `fix/x` are local branches and `feature` exists only as origin/feature."""
+    return name in ("main", "fix/x", "feature")
+
+
 def decide_fake(e, env, runs=()):
     """decide() in the fake layout: /r is the main checkout of every fake worktree."""
     return route.decide(e, env, fake_probe, runs=list(runs), main_of=lambda p: "/r")
@@ -78,12 +84,24 @@ class CreationTest(unittest.TestCase):
     ]
 
     def decide(self, tool, args, sub, env):
-        return route.decide(event(tool, sub=sub, **args), env, fake_probe)
+        return route.decide(event(tool, sub=sub, **args), env, fake_probe, refs=fake_refs)
 
-    def test_main_is_sent_to_the_skill(self):
+    def test_main_enter_worktree_is_allowed(self):
+        # Claude Code makes the worktree as usual; the PostToolUse hook then shows it in the herdr sidebar
+        self.assertIsNone(self.decide("EnterWorktree", {}, False, MAIN_ENV))
+        self.assertIsNone(self.decide("EnterWorktree", {"name": "beta"}, False, MAIN_ENV))
+
+    def test_main_branch_worktree_add_points_to_enter_worktree(self):
         for tool, args in self.CASES:
-            with self.subTest(tool=tool, args=args):
-                self.assertEqual(reason(self.decide(tool, args, False, MAIN_ENV)), route.DENY_MAIN)
+            if tool == "Bash":
+                with self.subTest(args=args):
+                    self.assertEqual(reason(self.decide(tool, args, False, MAIN_ENV)), route.DENY_MAIN_BASH)
+
+    def test_main_isolated_agent_is_sent_to_the_skill(self):
+        for tool, args in self.CASES:
+            if tool in ("Agent", "Task"):
+                with self.subTest(tool=tool):
+                    self.assertEqual(reason(self.decide(tool, args, False, MAIN_ENV)), route.DENY_MAIN_AGENT)
 
     def test_sub_is_told_to_hand_off(self):
         for tool, args in self.CASES:
@@ -121,6 +139,77 @@ class CreationTest(unittest.TestCase):
                     self.assertIsNone(self.decide(tool, args, sub, MAIN_ENV))
 
 
+class DetachedCheckoutTest(unittest.TestCase):
+    """The main session's `git worktree add` that makes no branch is a checkout for reading (the saju session
+    counted tests at an old commit this way) and passes. Anything that checks out or creates a branch is work
+    in a worktree, and is pointed at EnterWorktree."""
+
+    def decide(self, command, sub=False, env=MAIN_ENV):
+        return route.decide(event("Bash", sub=sub, command=command), env, fake_probe, refs=fake_refs)
+
+    def test_detached_checkouts_pass(self):
+        for cmd in ("git worktree add --detach /tmp/base",
+                    "git worktree add -d /tmp/base HEAD",
+                    "git worktree add -q /tmp/kb-base d449dd7",
+                    "git worktree add /tmp/base origin/main",
+                    "cd /r && git -C /r worktree add -q /tmp/base v1.2 && ls /tmp/base",
+                    'git worktree add "/tmp/my base" d449dd7'):
+            with self.subTest(cmd=cmd):
+                self.assertIsNone(self.decide(cmd))
+
+    def test_branch_checkouts_are_pointed_at_enter_worktree(self):
+        for cmd in ("git worktree add /tmp/x",                    # no commit-ish: a branch named after the path
+                    "git worktree add /tmp/x main",               # an existing local branch
+                    "git worktree add /tmp/x feature",            # only origin/feature: git creates feature
+                    "git worktree add -b fix/y /tmp/x d449dd7",
+                    "git worktree add -B fix/y /tmp/x",
+                    "git worktree add --orphan fresh /tmp/x",
+                    "git worktree add /tmp/x $REF",               # unknown until the shell runs it
+                    "git worktree add --detach /tmp/a && git worktree add /tmp/b -b x"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(reason(self.decide(cmd)), route.DENY_MAIN_BASH)
+
+    def test_ref_lookup_runs_in_the_repository_the_command_names(self):
+        seen = []
+
+        def refs(repo, name):
+            seen.append((repo, name))
+            return False
+        route.decide(event("Bash", cwd="/r", command="git -C /w/a worktree add /tmp/x d449dd7"), MAIN_ENV,
+                     fake_probe, refs=refs)
+        route.decide(event("Bash", cwd="/r", command="git worktree add /tmp/x d449dd7"), MAIN_ENV,
+                     fake_probe, refs=refs)
+        self.assertEqual(seen, [("/w/a", "d449dd7"), ("/r", "d449dd7")])
+
+    def test_redirections_are_not_arguments(self):
+        # `2` in `2>&1` must not be taken for a commit-ish, and the saju command with its pipe still passes
+        self.assertEqual(reason(self.decide("git worktree add /tmp/x 2>&1")), route.DENY_MAIN_BASH)
+        self.assertEqual(reason(self.decide("git worktree add /tmp/x > /tmp/log")), route.DENY_MAIN_BASH)
+        self.assertIsNone(self.decide("git worktree add -q /tmp/kb-base d449dd7 2>&1 | tail -1"))
+
+    def test_branch_ref_with_real_git(self):
+        repo = tempfile.mkdtemp()
+        try:
+            git = ["git", "-c", "user.email=t@example.com", "-c", "user.name=t", "-C", repo]
+            subprocess.run(git + ["init", "-q", "-b", "main"], check=True)
+            subprocess.run(git + ["commit", "-q", "--allow-empty", "-m", "init"], check=True)
+            subprocess.run(git + ["update-ref", "refs/remotes/origin/feature", "HEAD"], check=True)
+            head = subprocess.run(git + ["rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
+            self.assertTrue(route.branch_ref(repo, "main"))
+            self.assertTrue(route.branch_ref(repo, "feature"))       # git would create it from origin/feature
+            self.assertFalse(route.branch_ref(repo, head))
+            self.assertFalse(route.branch_ref(repo, "origin/feature"))
+            self.assertTrue(route.branch_ref(os.path.join(repo, "missing"), head))   # git failed: unknown
+        finally:
+            subprocess.run(["rm", "-rf", repo], check=False)
+
+    def test_detached_is_still_denied_for_subagents_and_workers(self):
+        cmd = "git worktree add --detach /tmp/base"
+        self.assertEqual(reason(self.decide(cmd, sub=True)), route.DENY_SUB)
+        self.assertEqual(reason(route.decide(event("Bash", cwd="/w/a", command=cmd), WORKER_ENV, fake_probe,
+                                             refs=fake_refs)), route.deny_worker_create("w1", "/w/a"))
+
+
 class MessageTest(unittest.TestCase):
     def test_sub_message_carries_the_handoff_block(self):
         self.assertIn("\nHERDR-HANDOFF\n", "\n" + route.DENY_SUB + "\n")
@@ -151,8 +240,30 @@ class MessageTest(unittest.TestCase):
         self.assertIn("Do not suggest", route.DENY_SUB)
         self.assertIn("Do not tell the user", route.NOTE_HANDOFF)
 
-    def test_main_exception_is_limited_to_the_user_in_this_conversation(self):
-        self.assertIn("the user, in this conversation, explicitly asked", route.DENY_MAIN)
+    def test_no_message_asks_before_a_worker_starts(self):
+        # Workers start without a question; whatever the user should know comes in the report afterwards
+        own = ("none", None, "/w/c")
+        for m in (route.HANDOFF, route.DENY_SUB, route.deny_sub(own), route.NOTE_HANDOFF, route.DENY_MAIN_AGENT,
+                  route.DENY_MAIN_BASH, route.deny_worker_create("w1", "/w/a")):
+            with self.subTest(m=m[:60]):
+                self.assertNotIn("confirm", m.lower())
+
+    def test_main_messages_say_the_routing_is_the_users_own_setup(self):
+        # A denial reads as "the user said no" unless it says whose rule it is; this one is the user's own choice
+        for m in (route.DENY_MAIN_AGENT, route.DENY_MAIN_BASH):
+            with self.subTest(m=m[:60]):
+                self.assertIn("the user installed these hooks", m)
+                self.assertIn("do not ask", m)
+
+    def test_main_messages_name_the_next_step_and_no_way_around(self):
+        # The old exception clause ("tell the user to run it with `!` or turn the hooks off") made the main
+        # session stop and ask; each message now names the one tool that does what was asked.
+        self.assertIn("EnterWorktree", route.DENY_MAIN_BASH)
+        self.assertIn(route.SKILL, route.DENY_MAIN_AGENT)
+        for m in (route.DENY_MAIN_BASH, route.DENY_MAIN_AGENT):
+            self.assertNotIn("`!", m)
+            self.assertNotIn("turn off", m)
+            self.assertNotIn("turn the hooks off", m)
 
     def test_worker_message_names_worker_and_home(self):
         m = route.deny_worker_create("w1", "/w/a")
@@ -287,11 +398,110 @@ class PostToolUseTest(unittest.TestCase):
         self.assertIsNone(route.decide(e, MAIN_ENV, fake_probe))
 
 
+class FakeHerdr:
+    """Records herdr calls and answers like the herdr CLI does (shapes taken from herdr 0.9.0)."""
+
+    def __init__(self, repo_key="/r/.git", workspaces=()):
+        self.calls, self.repo_key, self.workspaces = [], repo_key, list(workspaces)
+
+    def __call__(self, args):
+        self.calls.append(list(args))
+        if args[:2] == ["workspace", "get"]:
+            return {"result": {"workspace": {"workspace_id": args[2], "worktree": {"repo_key": self.repo_key}}}}
+        if args[:2] == ["workspace", "list"]:
+            return {"result": {"workspaces": self.workspaces}}
+        if args[:2] == ["worktree", "open"]:
+            return {"result": {"already_open": False, "workspace": {"workspace_id": "w9"}}}
+        return {"result": {"type": "ok"}}
+
+
+BETA = "/r/.claude/worktrees/beta"
+GONE = "/nonexistent/r/.claude/worktrees/beta"
+
+
+def register_probe(path):
+    if path == BETA or path.startswith(BETA + "/"):
+        return ("/r/.git/worktrees/beta", "/r/.git", BETA)
+    return fake_probe(path)
+
+
+class RegisterTest(unittest.TestCase):
+    """PostToolUse EnterWorktree / ExitWorktree in the main session: Claude Code makes and removes the worktree as
+    it always does; the hook only shows it in the herdr sidebar and closes the workspace once it is gone."""
+
+    ENV = dict(MAIN_ENV, HERDR_WORKSPACE_ID="w1")
+
+    def enter(self, response, sub=False, env=None, herdr=None, **tool_input):
+        e = event("EnterWorktree", sub=sub, hook="PostToolUse", cwd=BETA, **tool_input)
+        e["tool_response"] = response
+        herdr = herdr or FakeHerdr()
+        out = route.decide(e, env or self.ENV, register_probe, runs=[], main_of=lambda p: "/r", herdr=herdr)
+        return out, herdr.calls
+
+    def exit(self, response, herdr, runs=()):
+        e = event("ExitWorktree", hook="PostToolUse", cwd="/r", action=response.get("action"))
+        e["tool_response"] = response
+        return route.decide(e, self.ENV, register_probe, runs=list(runs), main_of=lambda p: "/r", herdr=herdr)
+
+    def test_enter_opens_the_worktree_in_the_sessions_workspace(self):
+        out, calls = self.enter({"worktreePath": BETA, "worktreeBranch": "worktree-beta"}, name="beta")
+        self.assertIsNone(out)   # nothing for the model to read
+        self.assertEqual(calls[-1], ["worktree", "open", "--workspace", "w1", "--path", BETA, "--label", "beta",
+                                     "--no-focus"])
+
+    def test_enter_uses_the_repository_when_the_workspace_belongs_to_another(self):
+        # --workspace would make herdr look for the worktree in the other repository (skill step 1)
+        _, calls = self.enter({"worktreePath": BETA}, herdr=FakeHerdr(repo_key="/other/.git"))
+        self.assertEqual(calls[-1][:4], ["worktree", "open", "--cwd", "/r"])
+
+    def test_enter_without_a_workspace_id_uses_the_repository(self):
+        _, calls = self.enter({"worktreePath": BETA}, env=MAIN_ENV)
+        self.assertEqual(calls, [["worktree", "open", "--cwd", "/r", "--path", BETA, "--label", "beta",
+                                  "--no-focus"]])
+
+    def test_enter_with_no_path_in_the_response_does_nothing(self):
+        for response in ({}, None, "Created worktree", {"worktreePath": 3}):
+            with self.subTest(response=response):
+                self.assertEqual(self.enter(response), (None, []))
+
+    def test_only_the_main_session_registers(self):
+        self.assertEqual(self.enter({"worktreePath": BETA}, sub=True), (None, []))
+        self.assertEqual(self.enter({"worktreePath": BETA}, env=dict(WORKER_ENV, HERDR_WORKSPACE_ID="w1")),
+                         (None, []))
+
+    def test_exit_remove_closes_the_workspace_of_the_removed_worktree(self):
+        herdr = FakeHerdr(workspaces=[{"workspace_id": "w2", "worktree": {"checkout_path": "/r"}},
+                                      {"workspace_id": "w9", "worktree": {"checkout_path": GONE}},
+                                      {"workspace_id": "w3"}])
+        self.assertIsNone(self.exit({"action": "remove", "worktreePath": GONE}, herdr))
+        self.assertEqual(herdr.calls, [["workspace", "list"], ["workspace", "close", "w9"]])
+
+    def test_exit_keep_does_nothing(self):
+        herdr = FakeHerdr(workspaces=[{"workspace_id": "w9", "worktree": {"checkout_path": GONE}}])
+        self.exit({"action": "keep", "worktreePath": GONE}, herdr)
+        self.assertEqual(herdr.calls, [])
+
+    def test_exit_never_closes_a_workspace_whose_checkout_still_exists(self):
+        here = tempfile.mkdtemp()
+        try:
+            herdr = FakeHerdr(workspaces=[{"workspace_id": "w9", "worktree": {"checkout_path": here}}])
+            self.exit({"action": "remove", "worktreePath": here}, herdr)
+            self.assertEqual(herdr.calls, [])
+        finally:
+            os.rmdir(here)
+
+    def test_exit_never_closes_a_recorded_worker(self):
+        herdr = FakeHerdr(workspaces=[{"workspace_id": "w9", "worktree": {"checkout_path": GONE}}])
+        self.exit({"action": "remove", "worktreePath": GONE}, herdr, runs=[{"name": "b", "worktree": GONE}])
+        self.assertNotIn(["workspace", "close", "w9"], herdr.calls)
+
+
 class EntryPointTest(unittest.TestCase):
     """Run route.py as Claude Code does: JSON on stdin, decision on stdout, always exit 0."""
 
     def run_route(self, arg, payload, env_extra, data_home):
-        env = {k: v for k, v in os.environ.items() if k not in ("HERDR_ENV", "HERDR_PW_WORKER")}
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("HERDR_ENV", "HERDR_PW_WORKER", "HERDR_WORKSPACE_ID")}
         env.update(env_extra)
         env["HERDR_SKILLS_DATA_HOME"] = data_home
         r = subprocess.run([_sys.executable, ROUTE_PATH, arg], input=payload, capture_output=True,
@@ -330,6 +540,32 @@ class EntryPointTest(unittest.TestCase):
         out = self.run_route("pre-tool-use", payload, {"HERDR_ENV": "1"}, self.data)
         self.assertEqual(_json.loads(out)["hookSpecificOutput"]["permissionDecision"], "deny")
 
+    def test_main_enter_worktree_is_not_denied(self):
+        payload = _json.dumps(event("EnterWorktree", name="beta"))
+        self.assertEqual(self.run_route("pre-tool-use", payload, {"HERDR_ENV": "1"}, self.data), "")
+
+    def test_post_enter_worktree_opens_it_with_the_real_herdr_cli(self):
+        # A real repository and worktree, and a `herdr` on PATH that records its arguments.
+        repo = os.path.join(self.data, "repo")
+        wt = os.path.join(repo, ".claude", "worktrees", "beta")
+        git = ["git", "-c", "user.email=t@example.com", "-c", "user.name=t"]
+        subprocess.run(git + ["init", "-q", repo], check=True)
+        subprocess.run(git + ["-C", repo, "commit", "-q", "--allow-empty", "-m", "init"], check=True)
+        subprocess.run(git + ["-C", repo, "worktree", "add", "-q", "-b", "worktree-beta", wt], check=True)
+        bin_dir, log = os.path.join(self.data, "bin"), os.path.join(self.data, "herdr.log")
+        os.makedirs(bin_dir)
+        with open(os.path.join(bin_dir, "herdr"), "w") as f:
+            f.write(f'#!/bin/sh\necho "$*" >> "{log}"\necho \'{{"result":{{"type":"ok"}}}}\'\n')
+        os.chmod(os.path.join(bin_dir, "herdr"), 0o755)
+        e = event("EnterWorktree", hook="PostToolUse", cwd=wt, name="beta")
+        e["tool_response"] = {"worktreePath": wt, "worktreeBranch": "worktree-beta"}
+        out = self.run_route("post-tool-use", _json.dumps(e),
+                             {"HERDR_ENV": "1", "PATH": bin_dir + os.pathsep + os.environ["PATH"]}, self.data)
+        self.assertEqual(out, "")
+        with open(log) as f:
+            self.assertIn(f"worktree open --cwd {os.path.realpath(repo)} --path {wt} --label beta --no-focus",
+                          f.read())
+
     def test_post_tool_use_note(self):
         payload = _json.dumps(event("Agent", hook="PostToolUse", prompt="x"))
         out = self.run_route("post-tool-use", payload, {"HERDR_ENV": "1"}, self.data)
@@ -337,7 +573,8 @@ class EntryPointTest(unittest.TestCase):
 
 
 class SpecMatrixTest(unittest.TestCase):
-    """Spec §5.3, cell by cell: every rule R1–R6 for every caller. Keep this table identical to the spec's."""
+    """Every rule for every caller, cell by cell. Keep this table identical to §3 of
+    docs/superpowers/specs/2026-10-13-register-claude-worktrees-design.md (R1-R3 changed for the main session)."""
     RULES = {
         "R1": lambda sub, cwd: event("Bash", sub=sub, cwd=cwd, command="git worktree add ../x -b x"),
         "R2": lambda sub, cwd: event("EnterWorktree", sub=sub, cwd=cwd),
@@ -350,9 +587,9 @@ class SpecMatrixTest(unittest.TestCase):
               "worker": (False, "/w/a", WORKER_ENV), "worker-sub": (True, "/w/a", WORKER_ENV)}
     #          main     sub    worker    worker-sub
     TABLE = {
-        "R1": ("MAIN", "SUB", "WORKER", "SUB"),
-        "R2": ("MAIN", "SUB", "WORKER", "SUB"),
-        "R3": ("MAIN", "SUB", "WORKER", "SUB"),
+        "R1": ("MAIN_BASH", "SUB", "WORKER", "SUB"),
+        "R2": (None, "SUB", "WORKER", "SUB"),        # the main session's EnterWorktree goes through (2026-10-13)
+        "R3": ("MAIN_AGENT", "SUB", "WORKER", "SUB"),
         "R4": (None, "SUB", "WORKER_WRITE", "SUB"),
         "R5": (None, None, None, None),   # removed: Bash writes are judged by R7 after they run
         "R6": ("NOTE", None, None, None),
@@ -366,7 +603,8 @@ class SpecMatrixTest(unittest.TestCase):
         if hso.get("additionalContext") == route.NOTE_HANDOFF:
             return "NOTE"
         own = ("none", None, "/w/b")
-        return {route.DENY_MAIN: "MAIN", route.DENY_SUB: "SUB", route.deny_sub(own): "SUB",
+        return {route.DENY_MAIN_BASH: "MAIN_BASH", route.DENY_MAIN_AGENT: "MAIN_AGENT",
+                route.DENY_SUB: "SUB", route.deny_sub(own): "SUB",
                 route.deny_sub(own, "/r"): "SUB",
                 route.deny_worker_create("w1", "/w/a"): "WORKER",
                 route.deny_worker_write("w1", "/w/a", own): "WORKER_WRITE"}.get(hso.get("permissionDecisionReason"), "OTHER")
@@ -392,14 +630,14 @@ class ReviewFixTest(unittest.TestCase):
 
     def test_commands_after_a_heredoc_still_count(self):
         cmd = "cat <<'EOF' > notes.md\nhello\nEOF\ngit worktree add ../x"
-        self.assertEqual(reason(route.decide(event("Bash", command=cmd), MAIN_ENV, fake_probe)), route.DENY_MAIN)
+        self.assertEqual(reason(route.decide(event("Bash", command=cmd), MAIN_ENV, fake_probe)), route.DENY_MAIN_BASH)
 
     def test_quoted_global_option_with_space_is_still_creation(self):
         for cmd in ('git -C "/Users/x/my repo" worktree add ../wt -b t',
                     "git -C '/Users/x/my repo' worktree add ../wt -b t"):
             with self.subTest(cmd=cmd):
                 self.assertEqual(reason(route.decide(event("Bash", command=cmd), MAIN_ENV, fake_probe)),
-                                 route.DENY_MAIN)
+                                 route.DENY_MAIN_BASH)
 
     def test_failed_probe_of_cwd_allows(self):
         def probe(path):   # the target resolves, the session's own directory does not (timeout, deleted cwd)

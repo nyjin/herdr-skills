@@ -2,12 +2,16 @@
 """Claude Code hooks that route worktree work to herdr-parallel-worktree inside herdr.
 
 Usage (from a hooks config):
-  route.py pre-tool-use           PreToolUse Bash(worktree add) / EnterWorktree / Agent / Task: deny creating a
-                                  worktree outside the skill (R1-R3). The main session is told to use the skill,
-                                  a subagent to hand the task back as a HERDR-HANDOFF block, a worker to do it itself.
+  route.py pre-tool-use           PreToolUse Bash(worktree add) / EnterWorktree / Agent / Task: worktree creation
+                                  (R1-R3). The main session's EnterWorktree and detached checkouts go through; its
+                                  other `git worktree add` is pointed at EnterWorktree, and a worktree-isolated Agent
+                                  at the skill. A subagent is told to hand the task back as a HERDR-HANDOFF block, a
+                                  worker to do it itself.
   route.py pre-tool-use-write     PreToolUse Write/Edit/MultiEdit/NotebookEdit: deny a subagent's or worker's write
                                   outside its own worktree, naming the target's owner (R4).
-  route.py post-tool-use          PostToolUse Agent/Task in the main session: how to handle a HERDR-HANDOFF (R6).
+  route.py post-tool-use          PostToolUse in the main session. Agent/Task: how to handle a HERDR-HANDOFF (R6).
+                                  EnterWorktree: open the worktree Claude Code just made in the herdr sidebar;
+                                  ExitWorktree that removed it: close that workspace (R8).
   route.py post-tool-use-bash     PostToolUse / PostToolUseFailure Bash: tell a subagent or worker that its command
   route.py post-tool-use-failure  changed a worktree outside its own (R7, observe.py), so it stops and hands it back.
 
@@ -36,6 +40,7 @@ if __name__ == "__main__" and len(sys.argv) == 2 and sys.argv[1] in NON_MAIN_ARG
 
 import json  # noqa: E402
 import re  # noqa: E402
+import shlex  # noqa: E402
 import subprocess  # noqa: E402
 import time  # noqa: E402
 
@@ -58,8 +63,8 @@ def handoff(owner, repo=None):
     return ("HERDR-HANDOFF\n"
             f"To the main session: load the {SKILL} skill and handle this by its `owner:` line (step 0, "
             "Receiving a handoff): pass it to that worker, ask the user about the main checkout, or start a new "
-            "worker for `none`, confirming with the user once. Do not tell the user to run it with `!` or to "
-            "turn the hooks off.\n"
+            "worker for `none`, without asking first. Do not tell the user to run it with `!` or to turn the "
+            "hooks off.\n"
             "name: <suggested worker name>\n"
             f"repo: {repo or '<absolute path of the target repository>'}\n"
             f"owner: {owner_label(owner)}\n"
@@ -84,19 +89,23 @@ def where(owner):
     return f"another worktree (`{top}`)" if top else "a new worktree"
 
 
-DENY_MAIN = (
-    f"Inside herdr, worktree work goes through the {SKILL} skill, so the user can watch each worker in the "
-    "herdr sidebar. Load that skill and follow it from step 0, which confirms the tasks with the user once. "
-    "This holds even when the plan to use a plain worktree or a subagent came from you or from a subagent. "
-    "Only if the user, in this conversation, explicitly asked for a plain git worktree: tell them this hook "
-    "blocked it; they can run it themselves with `! <command>`, or turn the hooks off by asking to "
-    f"\"turn off the {SKILL} hooks\"."
+DENY_MAIN_BASH = (
+    "Inside herdr, the user installed these hooks so that worktrees show in the herdr sidebar; do not ask "
+    "whether to get around them. Create a worktree you will work in with the EnterWorktree tool instead: it makes "
+    "the same git worktree and the sidebar shows it. To hand work to separate Claude workers, use the "
+    f"{SKILL} skill. A detached checkout for reading (`--detach`, or a commit that is not a branch) is not blocked."
+)
+DENY_MAIN_AGENT = (
+    "Inside herdr, the user installed these hooks so that an agent working in its own worktree runs as a herdr "
+    "worker they can watch in the sidebar, not as a hidden subagent. That is their standing choice: do not ask "
+    f"whether to bypass it. Load the {SKILL} skill and start the worker without asking first; tell the user what "
+    "you started afterwards."
 )
 
 
 def deny_sub(owner, repo=None):
     return ("You are a subagent. Inside herdr, work outside your own worktree goes back to the main session, which "
-            "hands it to the worktree's owner or starts a herdr worker after confirming with the user. "
+            "hands it to the worktree's owner or starts a herdr worker. "
             f"Do not create a worktree or write into {where(owner)}, and do not retry another way. Do not suggest "
             "running anything with `!` or turning the hooks off. Stop now and end your final reply with this "
             "block, filled in:\n\n" + handoff(owner, repo))
@@ -163,6 +172,144 @@ def code_only(command):
     """`command` with heredoc bodies dropped and quoted spans replaced by a placeholder word, so text that is only
     data — a commit message, an echo, a heredoc — is never read as a command."""
     return QUOTED.sub("Q", HEREDOC.sub("<<HEREDOC", command))
+
+
+CONTROL = re.compile(r"^[;&|()]+$")
+GIT_VALUE_OPTS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env"}
+
+
+def worktree_adds(command):
+    """(the -C directory or None, the arguments after `worktree add`) for each `git … worktree add` in command
+    position, or None when the command cannot be split (unbalanced quotes). Heredoc bodies are dropped and
+    redirections skipped, so `2>&1` is not read as an argument."""
+    found = []
+    for line in HEREDOC.sub("<<HEREDOC", command).replace("\\\n", " ").split("\n"):
+        try:
+            lex = shlex.shlex(line, posix=True, punctuation_chars=";&|()<>")
+            lex.whitespace_split = True
+            toks = list(lex) + [";"]
+        except ValueError:
+            return None
+        seg, skip = [], False
+        for t in toks:
+            if skip:
+                skip = False
+            elif CONTROL.match(t):
+                add = parse_add(seg)
+                if add:
+                    found.append(add)
+                seg = []
+            elif "<" in t or ">" in t:   # a redirection: drop its file descriptor and its target
+                if seg and seg[-1].isdigit():
+                    seg.pop()
+                skip = True
+            else:
+                seg.append(t)
+    return found
+
+
+def parse_add(seg):
+    i = 0
+    while i < len(seg) and re.match(r"^\w+=", seg[i]):   # VAR=value prefixes
+        i += 1
+    if i < len(seg) and seg[i] == "command":
+        i += 1
+    if i >= len(seg) or os.path.basename(seg[i]) != "git":
+        return None
+    i, cdir = i + 1, None
+    while i < len(seg) and seg[i].startswith("-"):
+        if seg[i] in GIT_VALUE_OPTS and i + 1 < len(seg):
+            if seg[i] == "-C":
+                cdir = os.path.join(cdir, seg[i + 1]) if cdir else seg[i + 1]
+            i += 2
+        else:
+            i += 1
+    return (cdir, seg[i + 2:]) if seg[i:i + 2] == ["worktree", "add"] else None
+
+
+def makes_branch(args, repo, refs):
+    """Whether `git worktree add <args>` checks out or creates a branch, rather than a detached HEAD."""
+    if any(a in ("-b", "-B", "--orphan") or a.startswith("--orphan=") for a in args):
+        return True
+    if "--detach" in args or "-d" in args:
+        return False
+    pos, skip = [], False
+    for a in args:
+        if skip:
+            skip = False
+        elif a == "--reason":
+            skip = True
+        elif not a.startswith("-"):
+            pos.append(a)
+    if len(pos) < 2:
+        return True                                    # no commit-ish: git names a new branch after the path
+    if "$" in pos[1] or "`" in pos[1]:
+        return True                                    # known only when the shell runs it
+    return refs(repo, pos[1])
+
+
+def branch_ref(repo, name):
+    """Whether `name` makes `git worktree add` check out a branch in `repo`: a local branch, or a branch in exactly
+    one remote (git then creates the local branch). Unknown (git failed) counts as a branch."""
+    if owners.git(["-C", repo, "rev-parse", "--verify", "-q", f"refs/heads/{name}"]) is not None:
+        return True
+    remote = owners.git(["-C", repo, "for-each-ref", "--format=%(refname)", f"refs/remotes/*/{name}"])
+    return remote is None or len(remote.split()) == 1
+
+
+def main_bash_makes_branch(command, cwd, refs):
+    adds = worktree_adds(command)
+    if not adds:
+        return True                                    # matched as a command but not understood: as before
+    return any(makes_branch(args, os.path.normpath(os.path.join(cwd, os.path.expanduser(cdir))) if cdir else cwd,
+                            refs) for cdir, args in adds)
+
+
+def run_herdr(args):
+    """The JSON herdr prints for `herdr <args>`, or None."""
+    try:
+        r = subprocess.run(["herdr", *args], capture_output=True, text=True, timeout=5)
+        return json.loads(r.stdout) if r.returncode == 0 else None
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+
+
+def register(event, env, probe, runs, main_of, herdr):
+    """R8: show the worktree Claude Code just made (EnterWorktree) in the herdr sidebar, and close its workspace
+    once ExitWorktree has removed it. Claude Code's own worktree handling is left exactly as it is."""
+    resp = event.get("tool_response")
+    path = resp.get("worktreePath") if isinstance(resp, dict) else None
+    if not isinstance(path, str) or not path:
+        return
+    if event.get("tool_name") == "EnterWorktree":
+        found = probe(path)
+        if not found:
+            return
+        loc, ws = None, env.get("HERDR_WORKSPACE_ID")
+        if ws:   # the session's workspace belongs to this repository: attach there (skill step 1)
+            info = (herdr(["workspace", "get", ws]) or {}).get("result") or {}
+            key = ((info.get("workspace") or {}).get("worktree") or {}).get("repo_key")
+            if isinstance(key, str) and os.path.realpath(key) == os.path.realpath(found[1]):
+                loc = ["--workspace", ws]
+        if loc is None:
+            main = main_of(path)
+            if not main:
+                return
+            loc = ["--cwd", main]
+        herdr(["worktree", "open", *loc, "--path", path, "--label", os.path.basename(path.rstrip(os.sep)),
+               "--no-focus"])
+        return
+    if resp.get("action") != "remove" or os.path.exists(path):
+        return                                         # kept, or still on disk: the workspace still shows it
+    rp = os.path.realpath(path)
+    if runs is None:
+        runs = owners.read_open_runs(owners.runs_path(env))
+    if any(os.path.realpath(r.get("worktree") or "") == rp for r in runs):
+        return                                         # a worker's workspace is the skill's to clean up
+    for w in ((herdr(["workspace", "list"]) or {}).get("result") or {}).get("workspaces") or []:
+        cp = (w.get("worktree") or {}).get("checkout_path")
+        if isinstance(cp, str) and os.path.realpath(cp) == rp and w.get("workspace_id"):
+            herdr(["workspace", "close", w["workspace_id"]])
 
 
 def actor(event, env):
@@ -249,7 +396,8 @@ def repo_of(own, runs, writer_main):
     return writer_main
 
 
-def decide(event, env, probe=git_probe, runs=None, main_of=owners.main_checkout_of, deps=None):
+def decide(event, env, probe=git_probe, runs=None, main_of=owners.main_checkout_of, deps=None, herdr=None,
+           refs=None):
     hook, tool = event.get("hook_event_name"), event.get("tool_name")
     args = event.get("tool_input") or {}
     who = actor(event, env)
@@ -270,12 +418,19 @@ def decide(event, env, probe=git_probe, runs=None, main_of=owners.main_checkout_
     if hook == "PostToolUse":
         if tool in ("Agent", "Task") and who == "main":
             return {"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": NOTE_HANDOFF}}
+        if tool in ("EnterWorktree", "ExitWorktree") and who == "main":
+            register(event, env, probe, runs, main_of, herdr or run_herdr)
         return None
     if hook != "PreToolUse":
         return None
     if creates_worktree(tool, args):
         if who == "main":
-            return deny(DENY_MAIN)
+            if tool == "EnterWorktree":
+                return None                      # Claude Code makes it as usual; PostToolUse shows it in herdr
+            if tool == "Bash":
+                command = args.get("command") or ""
+                return deny(DENY_MAIN_BASH) if main_bash_makes_branch(command, cwd, refs or branch_ref) else None
+            return deny(DENY_MAIN_AGENT)
         if who == "worker":
             return deny(deny_worker_create(env[WORKER_VAR], home_of(cwd, probe)))
         return deny(DENY_SUB)

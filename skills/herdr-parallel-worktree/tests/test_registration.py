@@ -34,7 +34,7 @@ class RegistrationTest(unittest.TestCase):
         ("PreToolUse", "Bash"): "pre-tool-use",
         ("PreToolUse", "EnterWorktree|Agent|Task"): "pre-tool-use",
         ("PreToolUse", "Write|Edit|MultiEdit|NotebookEdit"): "pre-tool-use-write",
-        ("PostToolUse", "Agent|Task"): "post-tool-use",
+        ("PostToolUse", "Agent|Task|EnterWorktree|ExitWorktree"): "post-tool-use",
         ("PostToolUse", "Bash"): "post-tool-use-bash",
         ("PostToolUseFailure", "Bash"): "post-tool-use-failure",
     }
@@ -54,7 +54,8 @@ class RegistrationTest(unittest.TestCase):
             ("EnterWorktree|Agent|Task", None),
             ("Write|Edit|MultiEdit|NotebookEdit", None),
         ])
-        self.assertEqual([g["matcher"] for g in self.plugin["PostToolUse"]], ["Agent|Task", "Bash"])
+        self.assertEqual([g["matcher"] for g in self.plugin["PostToolUse"]],
+                         ["Agent|Task|EnterWorktree|ExitWorktree", "Bash"])
         self.assertEqual([g["matcher"] for g in self.plugin["PostToolUseFailure"]], ["Bash"])
 
     def test_route_accepts_exactly_the_registered_arguments(self):

@@ -84,7 +84,7 @@ def hook_entries(skill_dir):
             group("Write|Edit|MultiEdit|NotebookEdit", "pre-tool-use-write"),
         ],
         "PostToolUse": [
-            group("Agent|Task", "post-tool-use"),
+            group("Agent|Task|EnterWorktree|ExitWorktree", "post-tool-use"),
             group("Bash", "post-tool-use-bash"),
         ],
         "PostToolUseFailure": [

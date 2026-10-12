@@ -83,8 +83,9 @@ check_finalize_brief() {
   tail -1 "$t" | grep -q 'Do not push or open a pull request.' || { echo "::error::closing paragraph missing"; return 1; }
 }
 
-# The route.py hook as Claude Code calls it: silent outside herdr, denies `git worktree add` inside it,
-# leaves look-alikes alone, and exits before any work for the plain main session's Bash.
+# The route.py hook as Claude Code calls it: silent outside herdr, denies a branch `git worktree add` inside it,
+# lets a detached checkout and the main session's EnterWorktree through, leaves look-alikes alone, and exits
+# before any work for the plain main session's Bash.
 check_hooks() {
   local r="$SKILL/scripts/hooks/route.py" data ev post
   jq -e '.hooks.PreToolUse and .hooks.PostToolUse and .hooks.PostToolUseFailure and (.hooks.SessionStart | not)' \
@@ -101,6 +102,11 @@ check_hooks() {
     || { echo "::error::route.py reacted to git status"; return 1; }
   [ -z "$(pre '"git commit -m \"explain git worktree add\""' | HERDR_ENV=1 HERDR_SKILLS_DATA_HOME="$data" python3 "$r" pre-tool-use)" ] \
     || { echo "::error::route.py read a quoted phrase as a command"; return 1; }
+  [ -z "$(pre '"git worktree add --detach ../base"' | HERDR_ENV=1 HERDR_SKILLS_DATA_HOME="$data" python3 "$r" pre-tool-use)" ] \
+    || { echo "::error::route.py denied a detached checkout"; return 1; }
+  ev='{"hook_event_name":"PreToolUse","cwd":"'"$PWD"'","tool_name":"EnterWorktree","tool_input":{"name":"beta"}}'
+  [ -z "$(echo "$ev" | HERDR_ENV=1 HERDR_SKILLS_DATA_HOME="$data" python3 "$r" pre-tool-use)" ] \
+    || { echo "::error::route.py denied the main session's EnterWorktree"; return 1; }
   post='{"hook_event_name":"PostToolUse","cwd":"'"$PWD"'","tool_name":"Bash","duration_ms":10,"tool_input":{"command":"ls"},"tool_response":{"stdout":""}}'
   [ -z "$(echo "$post" | HERDR_ENV=1 HERDR_SKILLS_DATA_HOME="$data" python3 -S "$r" post-tool-use-bash)" ] \
     || { echo "::error::route.py did not exit early for the main session's Bash"; return 1; }

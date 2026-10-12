@@ -32,7 +32,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "Agent|Task",
+        "matcher": "Agent|Task|EnterWorktree|ExitWorktree",
         "hooks": [
           {
             "type": "command",

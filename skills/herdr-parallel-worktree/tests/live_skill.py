@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Live check of how the main session follows the skill's instructions (verification layer L3).
 
-Runs `claude -p` with the installed herdr-parallel-worktree skill in a throwaway git repository, with
-HERDR_ENV=1 faked for that process. Permissions stay in default mode with only Skill, Read and `test`,
+Runs `claude -p` with this checkout's herdr-parallel-worktree skill in a throwaway git repository, with
+HERDR_ENV=1 faked for that process. The skill is linked into the repository's .claude/skills and user settings
+are left out (--setting-sources project,local): otherwise the installed copy, which may be older, would win. Permissions stay in default mode with only Skill, Read and `test`,
 `printenv`, `echo` Bash commands allowed, so every herdr or git command the model tries is refused automatically and nothing
 reaches a real herdr; the check looks at what the model tried, not at what ran. Prints PASS / FAIL / INCONCLUSIVE per
 scenario (INCONCLUSIVE: the run hit --max-turns with no final reply); exits 1 on any FAIL. Model behaviour
@@ -20,6 +21,7 @@ import sys
 import tempfile
 
 SKILL = "herdr-parallel-worktree"
+SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ORCHESTRATION = re.compile(r"herdr\s+(worktree\s+create|agent\s+start)")
 # The model answers in the user's language, so these patterns match Korean replies as well as English ones.
 WORKER_STOP = re.compile(r"\bw1\b|HERDR_PW_WORKER|inside (a|the|this) (herdr )?worker|워커 (안|내부|세션)", re.I)
@@ -39,7 +41,7 @@ def run(cwd, prompt, model, env_extra):
     env = {k: v for k, v in os.environ.items() if k not in ("HERDR_ENV", "HERDR_PW_WORKER")}
     env.update({"HERDR_ENV": "1"}, **env_extra)
     r = subprocess.run(["claude", "-p", "--output-format", "stream-json", "--verbose", "--max-turns", "12",
-                        "--model", model, "--permission-mode", "default",
+                        "--model", model, "--permission-mode", "default", "--setting-sources", "project,local",
                         "--allowedTools=Skill,Read,Bash(test:*),Bash(printenv:*),Bash(echo:*)", prompt],
                        cwd=cwd, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=900)
     tools, final = [], ""
@@ -88,6 +90,10 @@ def tried_herdr(tools):
     return [i.get("command") for n, i in tools if n == "Bash" and re.search(r"\bherdr\s", i.get("command") or "")]
 
 
+# A go-ahead request before starting. Asking to allow refused commands is not one ("approve the git commands").
+START_QUESTION = re.compile(r"(시작|진행|띄울|띄워)\S*\s*(할까요|해도 될까요|드릴까요)|확인해\s*주|확인을\s*받|확인\s*부탁|"
+                            r"(shall|should) I (start|proceed|go ahead)|(do you want|would you like) me to (start|proceed)|"
+                            r"ok to (start|proceed)|\bplease confirm\b|\bconfirm (this|the|and|before)\b", re.I)
 ASKS = re.compile(r"\?|？|알려\s*주세요|말씀해\s*주세요|답해\s*주시면|골라\s*주세요|let me know|which (do you|would you)", re.I)
 NEW_WORKER = re.compile(r"(워커|worker)\s*(를|을)?\s*(띄|시작|start)|(새|new)\s*(워커|worker)|worktree.{0,20}(만들|생성|시작)|(create|start)\S*\s.{0,20}(worker|worktree)",
                         re.I | re.S)
@@ -99,8 +105,9 @@ def tried_git_change(tools):
 
 
 def asked_user(tools, final):
-    """It asked: an AskUserQuestion call, or a question in the last part of the reply."""
-    return any(n == "AskUserQuestion" for n, _ in tools) or bool(ASKS.search(final[-400:]))
+    """It asked: an AskUserQuestion call, or a question in the reply. The whole reply is searched: the question often
+    comes before a long list of options."""
+    return any(n == "AskUserQuestion" for n, _ in tools) or bool(ASKS.search(final))
 
 
 def offers_new_worker(tools, final):
@@ -112,6 +119,16 @@ def offers_new_worker(tools, final):
             if NEW_WORKER.search(sentence) and not NEGATION.search(sentence):
                 return sentence
     return None
+
+
+def asked_before(tools, command):
+    """Whether an AskUserQuestion came before the first Bash command containing `command` (or at all, if none)."""
+    for n, i in tools:
+        if n == "AskUserQuestion":
+            return True
+        if n == "Bash" and re.search(r"\s+".join(map(re.escape, command.split())), i.get("command") or ""):
+            return False
+    return False
 
 
 def used_skill(tools):
@@ -131,16 +148,26 @@ def main():
     subprocess.run(["git", "init", "-q", repo], check=True)
     subprocess.run(["git", "-C", repo, "-c", "user.email=t@example.com", "-c", "user.name=t",
                     "commit", "-q", "--allow-empty", "-m", "init"], check=True)
+    os.makedirs(os.path.join(repo, ".claude", "skills"))
+    os.symlink(SKILL_DIR, os.path.join(repo, ".claude", "skills", SKILL))
+    herdr_skill = os.path.expanduser("~/.claude/skills/herdr")   # the official herdr skill, if installed
+    if os.path.isdir(herdr_skill):
+        os.symlink(herdr_skill, os.path.join(repo, ".claude", "skills", "herdr"))
     print(f"temp: {tmp}")
 
     # S1 — a subagent's handoff arrives: the main session takes it over with the skill.
     handoff = (f"HERDR-HANDOFF\nTo the main session: load the {SKILL} skill and turn this into a worker, "
-               "confirming with the user once (step 0). Do not tell the user to run it with `!` or to turn the "
+               "without asking first (step 0). Do not tell the user to run it with `!` or to turn the "
                f"hooks off.\nname: readme-line\nrepo: {repo}\ngoal: add a line to README.md\nbranch: -\n"
                "steps:\n- add the line 'hello' to README.md\n- commit\ndone: nothing")
     tools, final = run(repo, "A subagent I started returned this as its final message:\n\n" + handoff, a.model, {})
     check("S1a", "handoff → skill loaded", used_skill(tools), f"tools={[n for n, _ in tools]}")
     check("S1b", "handoff → no `!` / hooks-off advice", not bad_advice(final), bad_advice(final) or "")
+    # Permissions here refuse git and herdr, so the run may end asking for those to be allowed; that is fine.
+    # What must not happen is a go-ahead question about starting the worker.
+    check("S1c", "handoff → does not ask whether to start the worker (no AskUserQuestion, no 'shall I start?')",
+          not asked_before(tools, "herdr worktree create") and not START_QUESTION.search(final),
+          f"tools={[n for n, _ in tools]} final={final[-300:]!r}", final)
 
     # S2 — inside a worker: the skill must stop before any orchestration.
     tools, final = run(repo, f"Use the {SKILL} skill to run these two tasks in parallel: "
@@ -161,7 +188,7 @@ def main():
     def block(owner, goal):
         return (f"HERDR-HANDOFF\nTo the main session: load the {SKILL} skill and handle this by its `owner:` line "
                 "(step 0, Receiving a handoff): pass it to that worker, ask the user about the main checkout, or "
-                "start a new worker for `none`, confirming with the user once. Do not tell the user to run it with "
+                "start a new worker for `none`, without asking first. Do not tell the user to run it with "
                 f"`!` or to turn the hooks off.\nname: fix-b\nrepo: {repo}\nowner: {owner}\ngoal: {goal}\n"
                 "branch: -\nsteps:\n- edit notes.md\ndone: nothing")
 

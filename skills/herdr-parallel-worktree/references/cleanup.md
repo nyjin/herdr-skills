@@ -6,7 +6,7 @@ Cleaning up removes the worktree and closes its workspace. The branch, the brief
 
 ## When
 
-- **Before starting new workers (step 0)**: scan, and offer the candidates in the same confirmation question as the new tasks. Never clean up without that confirmation.
+- **When starting new workers (step 0)**: scan, and offer the candidates in the report after the new workers start (SKILL.md step 4). Never clean up without the user's go-ahead: it removes worktrees.
 - **On request**: "clean up finished worktrees", "tidy up the old workers" (in any language). Scan and confirm the same way.
 
 ## 1. Scan
@@ -34,7 +34,7 @@ Everything else lands in `keep` with its reasons. `stale` lists recorded runs wh
 
 ## 2. Confirm
 
-Run the scan right before asking, not earlier: `focused` and the worker status change as the user moves around the sidebar. Show candidates and kept runs in the confirmation question. For candidates, include why they qualify (`no commits`, `merged into main`, `pushed, not merged`). Mark "pushed, not merged" clearly: a pull request may still be under review and the user may want to keep editing locally. For kept runs, show the reasons, so the user knows what to do to make them cleanable (merge, push, commit, answer the blocked worker).
+Run the scan right before asking, not earlier: `focused` and the worker status change as the user moves around the sidebar. Show candidates and kept runs when you ask for the go-ahead to clean up. For candidates, include why they qualify (`no commits`, `merged into main`, `pushed, not merged`). Mark "pushed, not merged" clearly: a pull request may still be under review and the user may want to keep editing locally. For kept runs, show the reasons, so the user knows what to do to make them cleanable (merge, push, commit, answer the blocked worker).
 
 List `stale` runs too: marking them cleaned changes the record even though nothing is deleted.
 

@@ -63,20 +63,21 @@ jq -e '(type == "object") and (keys - ["workerArgs", "hooks"] == []) and ((.work
 This skill's description is kept short on purpose: it sits in every session's context, including sessions outside herdr where the skill is useless. Reliability comes from hooks instead, which only act inside herdr and cost nothing until they fire:
 
 - **Who is calling** decides the answer. A subagent's tool calls carry an `agent_id`; a herdr worker started by this skill has `HERDR_PW_WORKER=<name>` in its environment (step 3 exports it). Everything else is the main session.
-- **Creating a worktree some other way** — `git worktree add`, `EnterWorktree` without `path`, or an `Agent` with worktree isolation — is denied. The main session is told to use this skill. A subagent is told to stop and return a `HERDR-HANDOFF` block (below). A worker is told to do the work in its own worktree. `EnterWorktree` with `path` only enters an existing worktree (for example, to inspect a worker's worktree) and is allowed.
+- **The main session's own worktree is not blocked.** `EnterWorktree` makes the worktree the way Claude Code always does (`.claude/worktrees/<name>`, `.worktreeinclude`, its own cleanup), and a PostToolUse hook then opens it in the herdr sidebar; when `ExitWorktree` removes it, the hook closes that workspace. A detached `git worktree add` (`--detach`, or a commit that is not a branch) is a checkout for reading and passes too. Any other `git worktree add` from the main session is pointed at `EnterWorktree`. A worktree from `claude --worktree` at launch is not a tool call, so it does not appear in the sidebar.
+- **Handing work to an agent in its own worktree** goes through this skill, because the user cannot watch a subagent. An `Agent` with worktree isolation from the main session is denied and sent here. A subagent that tries to create a worktree in any way is told to stop and return a `HERDR-HANDOFF` block (below). A worker is told to do the work in its own worktree. `EnterWorktree` with `path` only enters an existing worktree (for example, to inspect a worker's worktree) and is allowed for everyone.
 - **Writing outside one's own worktree** is answered by the **owner** of the target: a worker recorded in `runs.json`, the main checkout, or `none` (a linked worktree nobody owns). A subagent's or worker's `Write`/`Edit`/`MultiEdit`/`NotebookEdit` there is denied before it happens. A subagent of the main session may write to the main checkout (the main session's own). The main session itself is never blocked.
 - **A Bash command that changed another worktree** is caught after it ran (PostToolUse / PostToolUseFailure): when the command names a path in that worktree and something there changed while it ran, the subagent or worker is told to stop and hand it back, with the owner named. Reading another worktree is fine.
 - **After the main session starts a subagent** (PostToolUse), one line of context tells it to handle a returned `HERDR-HANDOFF` block by its `owner:` line.
 
 Every handoff carries `owner:`, and step 0 ("Receiving a handoff") routes by it. The hooks decide from tool calls and their effects, never from prompt wording. Outside herdr a shell guard returns before python starts; inside herdr, the hooks that fire on every edit and Bash command return before any work for the main session itself.
 
-Plugin installs ship it in the plugin's `hooks/hooks.json`, active by default. Other installs leave it unregistered until the user asks for it, because registering it edits `~/.claude/settings.json`; `scripts/hooks/manage.py on` registers it there. When the user asks to turn the hook on or off, remove it, or check it ("turn off the herdr hooks", or the same in the user's language), run:
+Plugin installs ship it in the plugin's `hooks/hooks.json`, active by default. Other installs leave it unregistered until the user asks for it, because registering it edits `~/.claude/settings.json`; `scripts/hooks/manage.py on` registers it there. Those registered entries are a copy, so after updating a non-plugin install run `on` again to pick up changed hook events. When the user asks to turn the hook on or off, remove it, or check it ("turn off the herdr hooks", or the same in the user's language), run:
 
 ```bash
 python3 "<skill directory>/scripts/hooks/manage.py" <on|off|remove|status> --skill-dir "<skill directory>"
 ```
 
-Before `on` or `remove` on a non-plugin install, tell the user it edits `~/.claude/settings.json` (a backup is written first). For plugin installs, `remove` can only silence the hook; removing it entirely means disabling the plugin. Offer `! <command>` or turning the hooks off only when the user, in this conversation, explicitly asked for a plain `git worktree add` or a subagent. Otherwise do not bring them up, not even as an option: they route work around the sidebar, which is the reason this skill exists. A plan that came from you or from a subagent is not such a request: when a subagent reports that it was blocked or returns a `HERDR-HANDOFF` block, take it over with this skill (step 0, "Receiving a handoff").
+Before `on` or `remove` on a non-plugin install, tell the user it edits `~/.claude/settings.json` (a backup is written first). For plugin installs, `remove` can only silence the hook; removing it entirely means disabling the plugin. Installing the hooks was the user's decision: inside herdr, work handed to another agent runs as a visible worker. So when a hook routes something here, carry on with this skill; do not ask whether to bypass it, and do not suggest `! <command>` or turning the hooks off. A worktree for this session is `EnterWorktree`, which the hooks already show in the sidebar. Talk about turning the hooks off only when the user asks about the hooks themselves. When a subagent reports that it was blocked or returns a `HERDR-HANDOFF` block, take it over with this skill (step 0, "Receiving a handoff").
 
 ## 0. Preconditions
 
@@ -95,9 +96,9 @@ git -C "$ROOT" status --porcelain --untracked-files=all
 git -C "$ROOT" cat-file -e "HEAD:<path the task touches>" 2>/dev/null || echo "not in HEAD"
 ```
 
-If a path the task touches is missing from HEAD or modified (` M`, `??`), raise it in the confirmation question and let the user choose: "commit first and use that commit as base", "proceed as is", or "change the task". The orchestrator never commits or stashes on the user's behalf. Changes unrelated to the tasks need no mention.
+If a path the task touches is missing from HEAD or modified (` M`, `??`), start from `HEAD` anyway. Say in the brief that this path has changes in the source checkout the worker cannot see, so the worker raises it in its own pane if it needs them, and put it in the report (step 4): to include them, the user commits and you deliver a follow-up (`references/deliver.md`). The orchestrator never commits or stashes on the user's behalf. Changes unrelated to the tasks need no mention.
 
-**Offer to clean up finished workers.** Read `references/cleanup.md` and run its scan. If there are candidates, offer them in the same confirmation question as the new tasks; never clean up without that confirmation.
+**Offer to clean up finished workers.** Read `references/cleanup.md` and run its scan. If there are candidates, offer them in the report after the new workers start; cleaning up removes worktrees, so never do it without the user's go-ahead.
 
 **Receiving a handoff.** A subagent stopped by a hook ends its reply with a block like this, and a worker puts one in its `## Result`:
 
@@ -112,32 +113,30 @@ If a path the task touches is missing from HEAD or modified (` M`, `??`), raise 
     - <step>
     done: <what was already done, or nothing>
 
-Route each block by its `owner:` line. The user still confirms once: put every handed-off item in the same confirmation question as any other tasks.
+Route each block by its `owner:` line. Handed-off work starts like any other task of this run, without a question first.
 
 - **`owner: <worker name>`** — the work belongs in that worker's worktree. Do not start a new worker for it. Follow `references/deliver.md`: it hands the block to that worker, waiting if it is busy and resuming it first if it was cleaned up or its session ended.
-- **`owner: main-checkout`** — something changed (or was about to change) in the user's own checkout. Tell the user plainly what and where (`done:` and `steps:`), and ask what they want. Do not apply, revert, commit or move it yourself, and do not start a worker for it on your own: the user's checkout is theirs to decide about. Continuing the work in a worker is a fine choice to offer, as long as the user picks it; it needs the change committed first, because a worker starts from `HEAD` and would not see an uncommitted change.
+- **`owner: main-checkout`** — something changed (or was about to change) in the user's own checkout. Tell the user plainly what and where (`done:` and `steps:`) in the report, after any workers of this run have started, and ask what they want. Do not apply, revert, commit or move it yourself, and do not start a worker for it on your own: the user's checkout is theirs to decide about. Continuing the work in a worker is a fine choice to offer, as long as the user picks it; it needs the change committed first, because a worker starts from `HEAD` and would not see an uncommitted change.
 - **`owner: none`** (or no `owner:` line) — a new task for this run: `repo` is its `<target path>` for `ROOT`, `name` and `branch` are suggestions that the repository's conventions (below) override, and `goal` and `steps` go into the brief.
 
 If `done:` lists changes already made somewhere, they are uncommitted changes there: in the source checkout, handle them with the uncommitted-changes check above; in a worker's worktree, mention them when you deliver.
 
-Put the task list together and **get the user's confirmation once**. For each task decide:
+**Do not ask before starting.** By the time this skill runs, the user has already chosen to run the work as visible workers: they asked for it, or they installed the hooks that route it here. A question at this point cuts the flow for something the user can watch and change in the sidebar a moment later. So decide every task yourself, start the workers, and put whatever the user should know or decide into the report after they start (step 4). For each task decide:
 
 - Name: `[a-z][a-z0-9_-]{0,31}`, unique. Used as both the sidebar workspace label and the worker name (e.g. `proj-101`)
 - Branch: follow the repository's branch convention (e.g. `feature/PROJ-101`)
 - Base: defaults to `ROOT`'s current `HEAD`
 - Worktree path: follow the repository's convention (below)
-- Brief: pick a template and fill it with the goal, references, steps and rules taken from the user's request (step 2). The worker must be able to finish from the brief alone. Write the briefs (step 2) before asking for confirmation
+- Brief: pick a template and fill it with the goal, references, steps and rules taken from the user's request (step 2). The worker must be able to finish from the brief alone
 
 **The repository's conventions come first; herdr only builds what they describe.** Where worktrees live, how branches are named and what they are based on belong to the repository, not to the development tool. Look for the repository's own answer before falling back to any default:
 
 - Where worktrees go: a location stated in the repository's docs (`CLAUDE.md`, `AGENTS.md`, `CONTRIBUTING.md`, README), a worktree directory already listed in `.gitignore` (e.g. `.worktrees/`), or where existing worktrees already live (`git -C "$ROOT" worktree list`).
 - How branches are named: the same docs, and the pattern of existing branches (`git -C "$ROOT" branch -a`).
 
-If the user named a path, use it. If the repository has a worktree convention, pass the resulting path to herdr with `--path` (step 1). Only when the repository shows no worktree convention at all, leave `--path` out and let herdr use its default (`~/.herdr/worktrees/<repo>/<branch>`). If the convention puts worktrees inside the repository but that directory is not in `.gitignore`, point it out in the confirmation question rather than editing `.gitignore` yourself.
+If the user named a path, use it. If the repository has a worktree convention, pass the resulting path to herdr with `--path` (step 1). Only when the repository shows no worktree convention at all, leave `--path` out and let herdr use its default (`~/.herdr/worktrees/<repo>/<branch>`). If the convention puts worktrees inside the repository but that directory is not in `.gitignore`, point it out in the report rather than editing `.gitignore` yourself.
 
-The user must be able to tell what they are approving from the question screen alone. With AskUserQuestion, put the target repository (`ROOT`) and each task's name, branch, base, worktree path (with the convention it came from, or "herdr default"), worker arguments and the brief's steps section in the option `preview`. This is where the user confirms that every step they asked for made it in. If a brief still contains `[NEEDS CLARIFICATION: …]`, ask about it in the same question. The first line of the `preview` names the template: `Template: default (say "change the brief template" to customize)` for the default, otherwise `Template: <path>`. This line is how the user learns the template can be changed. Labels like "Proceed / Edit" alone hide the content and make the choice impossible to judge.
-
-More tasks means more concurrent claude sessions, which hit usage limits sooner. Confirm before running five or more.
+More tasks means more concurrent claude sessions, which hit usage limits sooner. With five or more, say so in the report.
 
 ## 1. Create the worktree workspace
 
@@ -228,7 +227,12 @@ If `session_id` in the output is `null` (not reported yet), that is fine: cleanu
 
 ## 4. Wait and watch
 
-Once all workers are started, tell the user in one line that the tasks are running in the `<name>` workspaces in the sidebar, then wait on each.
+Once all workers are started, report in one message, then wait on each. The report is where the user checks your decisions while the workers already run, so it must stand on its own:
+
+- First line, the template: `Template: default (say "change the brief template" to customize)` for the default, otherwise `Template: <path>`. This line is how the user learns the template can be changed.
+- The target repository (`ROOT`) and, per task: the `<name>` workspace in the sidebar, branch, base, worktree path (with the convention it came from, or "herdr default"), worker arguments, the brief's path and its steps section, so the user can see that every step they asked for made it in.
+- Everything that would once have been a question: assumptions written into a brief, uncommitted changes a worker cannot see, a worktree directory missing from `.gitignore`, five or more workers, cleanup candidates, a `main-checkout` handoff.
+- How to change course: tell you, and you deliver it to the running worker (`references/deliver.md`); or step into its workspace directly.
 
 ```bash
 herdr agent wait <name> --timeout 1800000
@@ -254,7 +258,7 @@ If a `## Result` contains `HERDR-HANDOFF` blocks, route them exactly as in step 
 
 The default is to **leave everything in place**: the user decides on push, PR and merge after reviewing each workspace.
 
-- **Cleaning up** finished workers — offered at step 0 of the next run, or when the user asks: follow `references/cleanup.md`. It only removes workers that are recorded, not `working` or `blocked`, clean, and whose work is merged, pushed or empty, always after confirmation, and reports how to resume each one.
+- **Cleaning up** finished workers — offered in the report of the next run, or when the user asks: follow `references/cleanup.md`. It only removes workers that are recorded, not `working` or `blocked`, clean, and whose work is merged, pushed or empty, always after confirmation, and reports how to resume each one.
 - **Resuming** a worker by name ("resume proj-101"): follow `references/resume.md`. It recreates the worktree at the recorded path, works out the agent's native resume option from the recorded clues (the same session reference herdr uses to restore agents), and checks that the conversation came back.
 
 Cleanup keeps branches. Delete a branch only when the user asks, after merging.
@@ -268,5 +272,6 @@ Cleanup keeps branches. Delete a branch only when the user asks, after merging.
 - Send the first instructions with `agent prompt`. They arrive as pasted text and the worker may refuse them. Later instructions go as a file plus one line pointing to it (`references/deliver.md`)
 - Have workers push or open pull requests
 - Start workers or create worktrees from inside a worker (`HERDR_PW_WORKER` set)
-- Tell the user to run a blocked command with `!` or to turn the hooks off because a subagent hit the hook; take its handoff over instead
+- Ask the user anything before the workers start; it goes in the report after they start (step 4)
+- Suggest `!` or turning the hooks off to get around them, or ask whether to: installing them was the user's choice
 - Start a new worker for work whose handoff names an existing worker as `owner:`; deliver it to that worker
