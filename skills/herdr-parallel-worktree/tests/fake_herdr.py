@@ -4,7 +4,8 @@
 Records every call and answers the commands the hooks make, in the shapes herdr 0.9.0 prints:
 `workspace get`, `workspace list`, `worktree open` (idempotent, like herdr's `already_open`) and
 `workspace close`. It also plays through the skill's worker start (`worktree create` makes a real git worktree,
-`pane run`, `agent start`, `agent wait`, `agent read`, ...) without running any agent. Anything else is recorded
+`plugin log list` (no plugins), `tab create`, `pane process-info`, `pane run`, `agent start`, `agent wait`,
+`agent read`, ...) without running any agent. Anything else is recorded
 and fails, which is enough to see that it was attempted.
 
   FAKE_HERDR_DIR       directory for calls.jsonl (one JSON array of arguments per call) and state.json
@@ -95,6 +96,16 @@ def main():
         save()
         reply({"result": {"worktree": {"path": path, "branch": branch}, "workspace": w,
                           "root_pane": {"pane_id": f"{wid}:p1"}}})
+    if args[:3] == ["plugin", "log", "list"]:
+        reply({"result": {"logs": []}})                      # no plugins react to the fake worktrees
+    if args[:2] == ["tab", "create"]:
+        wid = opt("--workspace") or "wf0"
+        n = state.setdefault("tabs", 0) + 1
+        state["tabs"] = n
+        save()
+        reply({"result": {"tab": {"tab_id": f"{wid}:t{n + 1}"}, "root_pane": {"pane_id": f"{wid}:p{n + 1}"}}})
+    if args[:2] == ["pane", "process-info"]:
+        reply({"result": {"process_info": {"shell_pid": 1, "foreground_process_group_id": 1}}})
     if args[:2] in (["pane", "run"], ["agent", "rename"], ["pane", "wait-output"]):
         reply({"result": {"type": "ok"}})
     if args[:2] == ["pane", "get"]:

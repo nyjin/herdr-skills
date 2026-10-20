@@ -37,12 +37,12 @@ Check the record against herdr, in this order:
 Reopening a closed workspace whose worktree is still there:
 
 ```bash
+SINCE="$(python3 -c 'import time; print(int(time.time() * 1000))')"
 OUT="$(herdr worktree open --cwd "$ROOT" --path <worktree> --label <name> --no-focus)"
 W="$(printf '%s' "$OUT" | jq -r .result.workspace.workspace_id)"
-P="$(printf '%s' "$OUT" | jq -r .result.root_pane.pane_id)"
 ```
 
-Then resume in `$P` with `references/resume.md` step 3, and record the new location:
+Then resume with `references/resume.md` step 3, which gives the worker a tab of its own (`P`), and record the new location:
 
 ```bash
 python3 "<skill directory>/scripts/runs.py" relocate --root "$ROOT" --name <name> --workspace "$W" --pane "$P"
