@@ -74,7 +74,7 @@ def claude(cwd, prompt, settings, model, env_extra, fake_dir=None):
     return r.stdout
 
 
-def decisions(log):
+def outputs(log):
     out = []
     if os.path.exists(log):
         for line in open(log):
@@ -82,6 +82,15 @@ def decisions(log):
             if line:
                 out.append(json.loads(line)["hookSpecificOutput"])
     return out
+
+
+def decisions(log):
+    """What the hooks said about tool calls. The role paragraph every session gets at start is not a decision."""
+    return [o for o in outputs(log) if o.get("hookEventName") != "SessionStart"]
+
+
+def roles(log):
+    return [o.get("additionalContext") for o in outputs(log) if o.get("hookEventName") == "SessionStart"]
 
 
 def denied_with(log, text):
@@ -140,6 +149,8 @@ def main():
         check("C1", "subagent worktree creation denied with DENY_SUB", "FAIL" if attempted else "INCONCLUSIVE",
               f"decisions={decisions(log1)}")
     check("C2", "worktree was not created", "FAIL" if os.path.exists(new_wt) else "PASS")
+    check("C25", "the main session is told it is the orchestrator when it starts",
+          "PASS" if route.ROLE_MAIN in roles(log1) else "FAIL")
     notes = [d for d in decisions(log1) if d.get("additionalContext") == route.NOTE_HANDOFF]
     check("C3", "main session got NOTE_HANDOFF after starting the subagent", "PASS" if notes else "FAIL")
     filled = "HERDR-HANDOFF" in out1 and "repo:" in out1 and "<absolute path" not in out1
@@ -242,6 +253,9 @@ def main():
           else ("FAIL" if os.path.exists(os.path.join(sib, "c17.txt")) else "INCONCLUSIVE"))
     os.remove(os.path.join(data, "herdr-parallel-worktree", "runs.json"))
 
+    check("C26", "a worker is told its role when it starts",
+          "PASS" if route.role_worker("w1") in roles(log6) else "FAIL")
+
     # Run 7 — the main session's own Bash writes are never observed.
     log7, set7 = os.path.join(tmp, "run7.log"), os.path.join(tmp, "run7.json")
     write_settings(set7, log7)
@@ -283,7 +297,7 @@ def main():
         f"reply done. (1) `git -C {repo} worktree add --detach {detached} HEAD` "
         f"(2) `git -C {repo} worktree add {branchy} -b b9`"), set9, a.model, herdr)
     check("C23", "main session detached checkout passes", "PASS" if os.path.exists(detached) else "FAIL")
-    check("C24", "main session branch worktree add is pointed at EnterWorktree",
+    check("C24", "main session branch worktree add is denied with DENY_MAIN_BASH (a worker, or EnterWorktree for this session)",
           "PASS" if denied_with(log9, route.DENY_MAIN_BASH) and not os.path.exists(branchy)
           else ("FAIL" if os.path.exists(branchy) else "INCONCLUSIVE"), f"decisions={decisions(log9)}")
 
