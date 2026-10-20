@@ -110,7 +110,10 @@ check_hooks() {
   post='{"hook_event_name":"PostToolUse","cwd":"'"$PWD"'","tool_name":"Bash","duration_ms":10,"tool_input":{"command":"ls"},"tool_response":{"stdout":""}}'
   [ -z "$(echo "$post" | HERDR_ENV=1 HERDR_SKILLS_DATA_HOME="$data" python3 -S "$r" post-tool-use-bash)" ] \
     || { echo "::error::route.py did not exit early for the main session's Bash"; return 1; }
-  ev='{"hook_event_name":"SessionStart","cwd":"'"$PWD"'","source":"startup"}'
+  # The role goes to a session in the main checkout, not to one in a linked worktree; this checkout may be either.
+  local main
+  main=$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")
+  ev='{"hook_event_name":"SessionStart","cwd":"'"$main"'","source":"startup"}'
   echo "$ev" | HERDR_ENV=1 HERDR_SKILLS_DATA_HOME="$data" python3 -S "$r" session-start \
     | jq -e '.hookSpecificOutput.additionalContext | startswith("You are the orchestrator")' >/dev/null \
     || { echo "::error::route.py did not tell the main session its role"; return 1; }

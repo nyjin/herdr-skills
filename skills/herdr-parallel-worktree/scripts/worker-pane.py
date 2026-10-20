@@ -10,16 +10,18 @@ Whether a pane is free cannot be told from a moment's look: a plugin's command c
 queue. So the worker never uses those panes:
 
 1. Wait until every plugin handler for those events that started at or after --since (milliseconds, taken just
-   before `herdr worktree create` or `worktree open`) has finished, as `herdr plugin log list` reports. With no
-   such handler within --quiet-ms, no plugin reacted. A tab created before a plugin runs can make it skip its
-   layout, so this comes first.
+   before `herdr worktree create` or `worktree open`) has finished, as `herdr plugin log list` reports, and no
+   new one has appeared for --quiet-ms after that (plugins' handlers need not show up at the same moment). With
+   no such handler within --quiet-ms, no plugin reacted. A tab created before a plugin runs can make it skip its
+   layout, so this comes first. A herdr without plugin logs has nothing to wait for; any other failure of the
+   log query is not read as "no plugins": the wait goes on and, if it never succeeds, is reported.
 2. Create a tab labelled N in workspace W, cwd WT, with HERDR_PW_WORKER=N in its environment.
 3. Wait until the tab's shell is idle at its prompt: the shell is the only foreground process, twice in a row.
    Owning the foreground is not enough: prompt hooks (mise, direnv, ...) run in the shell's own process group,
    and herdr refuses `agent start` with `agent_pane_busy` while one runs.
 
 Prints JSON: {"tab", "pane", "settled", "handlers": [{"plugin", "event", "status"}], "still_running": [...],
-"shell_ready"}. A plugin still running at --timeout-ms or a shell not ready in time is reported, not fatal: the
+"log_error", "shell_ready"}. A plugin still running at --timeout-ms or a shell not ready in time is reported, not fatal: the
 caller decides. Exits 1 with herdr's error on stderr only when the tab cannot be created.
 """
 import argparse
@@ -48,27 +50,39 @@ def herdr(*args):
     return data["result"]
 
 
+UNSUPPORTED = ("unrecognized subcommand", "unsupported", "not_supported", "unknown_command")
+
+
 def handlers(since):
+    """Return (handlers, error). An older herdr without plugin logs gives ([], None): nothing to wait for."""
     try:
         logs = herdr("plugin", "log", "list", "--limit", "100").get("logs") or []
-    except RuntimeError:
-        return []   # an older herdr without plugin logs: nothing to wait for
+    except RuntimeError as e:
+        return ([], None) if any(k in str(e) for k in UNSUPPORTED) else ([], str(e))
     return [{"plugin": e.get("plugin_id"), "event": e.get("event"), "status": e.get("status")}
-            for e in logs if e.get("event") in EVENTS and (e.get("started_unix_ms") or 0) >= since]
+            for e in logs if e.get("event") in EVENTS and (e.get("started_unix_ms") or 0) >= since], None
 
 
 def settle(since, timeout_ms, quiet_ms, poll_ms):
-    start = time.monotonic()
+    """Return (settled, handlers, still_running, log_error)."""
+    start, done_at, done_n = time.monotonic(), None, 0
     while True:
-        seen = handlers(since)
-        elapsed = (time.monotonic() - start) * 1000
+        seen, error = handlers(since)
+        now = time.monotonic()
+        elapsed = (now - start) * 1000
         running = [h["plugin"] for h in seen if h["status"] == "running"]
-        if seen and not running:
-            return True, seen, []
-        if not seen and elapsed >= quiet_ms:
-            return True, [], []
+        if error is None:
+            if seen and not running:
+                if done_at is None or len(seen) != done_n:   # all done for now; wait for a late handler
+                    done_at, done_n = now, len(seen)
+                elif (now - done_at) * 1000 >= quiet_ms:
+                    return True, seen, [], None
+            else:
+                done_at = None
+                if not seen and elapsed >= quiet_ms:
+                    return True, [], [], None
         if elapsed >= timeout_ms:
-            return False, seen, running
+            return False, seen, running, error
         time.sleep(poll_ms / 1000)
 
 
@@ -103,7 +117,7 @@ def main():
     p.add_argument("--poll-ms", type=int, default=200)
     a = p.parse_args()
 
-    settled, seen, running = settle(a.since, a.timeout_ms, a.quiet_ms, a.poll_ms)
+    settled, seen, running, log_error = settle(a.since, a.timeout_ms, a.quiet_ms, a.poll_ms)
     try:
         tab = herdr("tab", "create", "--workspace", a.workspace, "--cwd", a.worktree, "--label", a.name,
                     "--env", f"HERDR_PW_WORKER={a.name}", "--no-focus")
@@ -112,7 +126,7 @@ def main():
         sys.exit(1)
     pane = (tab.get("root_pane") or {}).get("pane_id")
     print(json.dumps({"tab": (tab.get("tab") or {}).get("tab_id"), "pane": pane, "settled": settled,
-                      "handlers": seen, "still_running": running,
+                      "handlers": seen, "still_running": running, "log_error": log_error,
                       "shell_ready": bool(pane) and shell_ready(pane, a.timeout_ms, a.poll_ms)}))
 
 

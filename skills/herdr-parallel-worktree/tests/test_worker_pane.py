@@ -29,7 +29,12 @@ def pop(key):
         json.dump(plan, f)
     return v
 if args[:3] == ["plugin", "log", "list"]:
-    print(json.dumps({"result": {"logs": pop("logs")}})); sys.exit(0)
+    logs = pop("logs")
+    if logs == "unsupported":   # an older herdr without plugin logs: clap rejects the subcommand
+        print("error: unrecognized subcommand 'plugin'", file=sys.stderr); sys.exit(2)
+    if logs == "error":
+        print(json.dumps({"error": {"code": "server_unavailable"}}), file=sys.stderr); sys.exit(1)
+    print(json.dumps({"result": {"logs": logs}})); sys.exit(0)
 if args[:2] == ["tab", "create"]:
     if plan.get("tab_error"):
         print(json.dumps({"error": {"code": "workspace_not_found"}}), file=sys.stderr); sys.exit(1)
@@ -88,6 +93,35 @@ class WorkerPaneTest(unittest.TestCase):
         names = [c[:3] if c[0] == "plugin" else c[:2] for c in self.calls()]
         self.assertLess(max(i for i, c in enumerate(names) if c == ["plugin", "log", "list"]),
                         names.index(["tab", "create"]))
+
+    def test_a_handler_that_appears_after_another_finished_is_waited_for(self):
+        # two plugins: the first finishes before the second shows up in the log
+        rc, out, err = self.run_script([[log("a", "succeeded")],
+                                        [log("a", "succeeded"), log("b", "running")],
+                                        [log("a", "succeeded"), log("b", "running")],
+                                        [log("a", "succeeded"), log("b", "succeeded")]])
+        self.assertEqual(rc, 0, err)
+        self.assertTrue(out["settled"])
+        self.assertEqual(sorted(h["plugin"] for h in out["handlers"]), ["a", "b"])
+
+    def test_older_herdr_without_plugin_logs_has_nothing_to_wait_for(self):
+        rc, out, err = self.run_script(["unsupported"])
+        self.assertEqual(rc, 0, err)
+        self.assertTrue(out["settled"])
+        self.assertEqual(out["handlers"], [])
+
+    def test_a_failing_log_query_is_not_read_as_no_plugins(self):
+        rc, out, err = self.run_script(["error"])
+        self.assertEqual(rc, 0, err)
+        self.assertFalse(out["settled"])
+        self.assertIn("server_unavailable", out["log_error"])
+        self.assertEqual(len(self.tab_create()), 1)
+
+    def test_a_passing_log_error_does_not_stick(self):
+        rc, out, err = self.run_script(["error", [log("a", "succeeded")]])
+        self.assertEqual(rc, 0, err)
+        self.assertTrue(out["settled"])
+        self.assertIsNone(out["log_error"])
 
     def test_tab_carries_the_worker_variable_cwd_and_label(self):
         rc, out, err = self.run_script([[log("a", "succeeded")]])
