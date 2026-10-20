@@ -453,6 +453,10 @@ def decide(event, env, probe=git_probe, runs=None, main_of=owners.main_checkout_
     if hook == "SessionStart":
         if who not in ("main", "worker"):
             return None                          # a subagent's own start, should one ever reach here
+        if who == "main":
+            home = probe(cwd)
+            if home and home[0] != home[1]:
+                return None                      # a plain claude in a linked worktree, e.g. one a plugin started
         text = role_worker(env[WORKER_VAR]) if who == "worker" else ROLE_MAIN
         return {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": text}}
     if hook != "PreToolUse":

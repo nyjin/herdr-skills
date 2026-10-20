@@ -604,8 +604,8 @@ class EntryPointTest(unittest.TestCase):
 class SessionStartTest(unittest.TestCase):
     """R9: inside herdr a session learns its role when it starts; the hooks only correct it afterwards."""
 
-    def start(self, env, sub=False):
-        e = {"session_id": "s", "cwd": "/r", "hook_event_name": "SessionStart", "source": "startup",
+    def start(self, env, sub=False, cwd="/r"):
+        e = {"session_id": "s", "cwd": cwd, "hook_event_name": "SessionStart", "source": "startup",
              "transcript_path": "/tmp/t.jsonl"}
         if sub:
             e.update(agent_id="a1", agent_type="general-purpose")
@@ -620,6 +620,13 @@ class SessionStartTest(unittest.TestCase):
 
     def test_worker_is_named(self):
         self.assertEqual(self.context(self.start(WORKER_ENV)), route.role_worker("w1"))
+
+    def test_a_plain_session_in_a_linked_worktree_gets_nothing(self):
+        # e.g. the claude a herdr plugin's layout starts in a worker's workspace: it is not the orchestrator
+        self.assertIsNone(self.start(MAIN_ENV, cwd="/w/a"))
+        self.assertIsNone(self.start(MAIN_ENV, cwd="/w/a/src"))
+        self.assertEqual(self.context(self.start(MAIN_ENV, cwd="/x")), route.ROLE_MAIN)   # outside git
+        self.assertEqual(self.context(self.start(WORKER_ENV, cwd="/w/a")), route.role_worker("w1"))
 
     def test_subagents_get_nothing(self):
         self.assertIsNone(self.start(MAIN_ENV, sub=True))
