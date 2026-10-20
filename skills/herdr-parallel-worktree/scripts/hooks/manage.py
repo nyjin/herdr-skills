@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Turn herdr-parallel-worktree's routing hooks (PreToolUse, PostToolUse, PostToolUseFailure) on or off, or remove them.
+"""Turn herdr-parallel-worktree's hooks (PreToolUse, PostToolUse, PostToolUseFailure, SessionStart) on or off, or remove them.
 
 Usage: manage.py <on|off|remove|status> --skill-dir <skill directory as installed>
 
@@ -75,7 +75,7 @@ def hook_entries(skill_dir):
         hook = {"type": "command", "command": f"{GUARD}{route} {arg}"}
         if rule:
             hook["if"] = rule
-        return {"matcher": matcher, "hooks": [hook]}
+        return {"matcher": matcher, "hooks": [hook]} if matcher else {"hooks": [hook]}
 
     return {
         "PreToolUse": [
@@ -89,6 +89,9 @@ def hook_entries(skill_dir):
         ],
         "PostToolUseFailure": [
             group("Bash", "post-tool-use-failure"),
+        ],
+        "SessionStart": [
+            group(None, "session-start"),
         ],
     }
 

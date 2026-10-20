@@ -445,7 +445,9 @@ class RegisterTest(unittest.TestCase):
 
     def test_enter_opens_the_worktree_in_the_sessions_workspace(self):
         out, calls = self.enter({"worktreePath": BETA, "worktreeBranch": "worktree-beta"}, name="beta")
-        self.assertIsNone(out)   # nothing for the model to read
+        # the model learns the sidebar label, so it can point the user at it
+        self.assertEqual(out, {"hookSpecificOutput": {"hookEventName": "PostToolUse",
+                                                      "additionalContext": route.note_entered("beta")}})
         self.assertEqual(calls[-1], ["worktree", "open", "--workspace", "w1", "--path", BETA, "--label", "beta",
                                      "--no-focus"])
 
@@ -458,6 +460,15 @@ class RegisterTest(unittest.TestCase):
         _, calls = self.enter({"worktreePath": BETA}, env=MAIN_ENV)
         self.assertEqual(calls, [["worktree", "open", "--cwd", "/r", "--path", BETA, "--label", "beta",
                                   "--no-focus"]])
+
+    def test_enter_says_nothing_when_herdr_did_not_open_it(self):
+        class Failing(FakeHerdr):
+            def __call__(self, args):
+                out = super().__call__(args)
+                return None if args[:2] == ["worktree", "open"] else out
+        out, calls = self.enter({"worktreePath": BETA}, herdr=Failing())
+        self.assertIsNone(out)
+        self.assertEqual(calls[-1][:2], ["worktree", "open"])
 
     def test_enter_with_no_path_in_the_response_does_nothing(self):
         for response in ({}, None, "Created worktree", {"worktreePath": 3}):
@@ -561,7 +572,7 @@ class EntryPointTest(unittest.TestCase):
         e["tool_response"] = {"worktreePath": wt, "worktreeBranch": "worktree-beta"}
         out = self.run_route("post-tool-use", _json.dumps(e),
                              {"HERDR_ENV": "1", "PATH": bin_dir + os.pathsep + os.environ["PATH"]}, self.data)
-        self.assertEqual(out, "")
+        self.assertEqual(_json.loads(out)["hookSpecificOutput"]["additionalContext"], route.note_entered("beta"))
         with open(log) as f:
             self.assertIn(f"worktree open --cwd {os.path.realpath(repo)} --path {wt} --label beta --no-focus",
                           f.read())
@@ -570,6 +581,61 @@ class EntryPointTest(unittest.TestCase):
         payload = _json.dumps(event("Agent", hook="PostToolUse", prompt="x"))
         out = self.run_route("post-tool-use", payload, {"HERDR_ENV": "1"}, self.data)
         self.assertEqual(_json.loads(out)["hookSpecificOutput"]["additionalContext"], route.NOTE_HANDOFF)
+
+
+    START = _json.dumps({"session_id": "s", "cwd": "/r", "hook_event_name": "SessionStart",
+                                 "source": "startup"})
+
+    def test_session_start_inside_herdr(self):
+        out = self.run_route("session-start", self.START, {"HERDR_ENV": "1"}, self.data)
+        self.assertEqual(_json.loads(out)["hookSpecificOutput"]["additionalContext"], route.ROLE_MAIN)
+        out = self.run_route("session-start", self.START, {"HERDR_ENV": "1", "HERDR_PW_WORKER": "w1"},
+                             self.data)
+        self.assertEqual(_json.loads(out)["hookSpecificOutput"]["additionalContext"], route.role_worker("w1"))
+
+    def test_session_start_silent_outside_herdr_or_when_off(self):
+        self.assertEqual(self.run_route("session-start", self.START, {}, self.data), "")
+        os.makedirs(os.path.join(self.data, "herdr-parallel-worktree"))
+        with open(os.path.join(self.data, "herdr-parallel-worktree", "config.json"), "w") as f:
+            f.write('{"hooks": "off"}')
+        self.assertEqual(self.run_route("session-start", self.START, {"HERDR_ENV": "1"}, self.data), "")
+
+
+class SessionStartTest(unittest.TestCase):
+    """R9: inside herdr a session learns its role when it starts; the hooks only correct it afterwards."""
+
+    def start(self, env, sub=False):
+        e = {"session_id": "s", "cwd": "/r", "hook_event_name": "SessionStart", "source": "startup",
+             "transcript_path": "/tmp/t.jsonl"}
+        if sub:
+            e.update(agent_id="a1", agent_type="general-purpose")
+        return route.decide(e, env, fake_probe)
+
+    def context(self, out):
+        self.assertEqual(out["hookSpecificOutput"]["hookEventName"], "SessionStart")
+        return out["hookSpecificOutput"]["additionalContext"]
+
+    def test_main_session_is_the_orchestrator(self):
+        self.assertEqual(self.context(self.start(MAIN_ENV)), route.ROLE_MAIN)
+
+    def test_worker_is_named(self):
+        self.assertEqual(self.context(self.start(WORKER_ENV)), route.role_worker("w1"))
+
+    def test_subagents_get_nothing(self):
+        self.assertIsNone(self.start(MAIN_ENV, sub=True))
+        self.assertIsNone(self.start(WORKER_ENV, sub=True))
+
+    def test_role_texts(self):
+        # A single ticket is handed off too, and another skill's "dispatch a subagent" is a worker here
+        self.assertIn("even a single ticket", route.ROLE_MAIN)
+        self.assertIn(route.SKILL, route.ROLE_MAIN)
+        self.assertIn("that dispatch is a worker", route.ROLE_MAIN)
+        w = route.role_worker("w1")
+        self.assertIn("`w1`", w)
+        self.assertIn("HERDR-HANDOFF", w)
+        for m in (route.ROLE_MAIN, w):
+            self.assertNotIn("confirm", m.lower())
+            self.assertNotIn("`!", m)
 
 
 class SpecMatrixTest(unittest.TestCase):

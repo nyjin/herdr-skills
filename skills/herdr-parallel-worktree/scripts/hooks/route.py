@@ -14,6 +14,7 @@ Usage (from a hooks config):
                                   ExitWorktree that removed it: close that workspace (R8).
   route.py post-tool-use-bash     PostToolUse / PostToolUseFailure Bash: tell a subagent or worker that its command
   route.py post-tool-use-failure  changed a worktree outside its own (R7, observe.py), so it stops and hands it back.
+  route.py session-start          SessionStart: tell the session its role, orchestrator or worker <name> (R9).
 
 Who called: HERDR_PW_WORKER (exported by the skill into each worker's pane) marks a herdr worker; `agent_id`
 in the hook input marks a subagent. Owners come from DATA_DIR/runs.json (owners.py).
@@ -29,9 +30,10 @@ import sys
 # with neither `"agent_id"` in the raw input nor HERDR_PW_WORKER set ends here, before json or git are even
 # imported: these hooks fire on every edit and every Bash command inside herdr.
 NON_MAIN_ARGS = ("pre-tool-use-write", "post-tool-use-bash", "post-tool-use-failure")
-ALL_ARGS = ("pre-tool-use", "post-tool-use") + NON_MAIN_ARGS
+ALL_ARGS = ("pre-tool-use", "post-tool-use", "session-start") + NON_MAIN_ARGS
 EVENT_OF_ARG = {"pre-tool-use": "PreToolUse", "pre-tool-use-write": "PreToolUse", "post-tool-use": "PostToolUse",
-                "post-tool-use-bash": "PostToolUse", "post-tool-use-failure": "PostToolUseFailure"}
+                "post-tool-use-bash": "PostToolUse", "post-tool-use-failure": "PostToolUseFailure",
+                "session-start": "SessionStart"}
 _RAW = None
 if __name__ == "__main__" and len(sys.argv) == 2 and sys.argv[1] in NON_MAIN_ARGS:
     _RAW = sys.stdin.buffer.read()
@@ -90,10 +92,13 @@ def where(owner):
 
 
 DENY_MAIN_BASH = (
-    "Inside herdr, the user installed these hooks so that worktrees show in the herdr sidebar; do not ask "
-    "whether to get around them. Create a worktree you will work in with the EnterWorktree tool instead: it makes "
-    "the same git worktree and the sidebar shows it. To hand work to separate Claude workers, use the "
-    f"{SKILL} skill. A detached checkout for reading (`--detach`, or a commit that is not a branch) is not blocked."
+    "Inside herdr, the user installed these hooks: you are the orchestrator, and a branch for a task or ticket, "
+    "even a single one, becomes a herdr worker with its own worktree and its own claude in the sidebar. That is "
+    f"their standing choice: do not ask whether to get around it. Load the {SKILL} skill and start the worker; it "
+    "creates the worktree at the repository's conventional path and branch. Use the EnterWorktree tool only when "
+    "the user asks for this session itself to move into a worktree: it creates `.claude/worktrees/<name>` on "
+    "branch `worktree-<name>` (a `/` in the name becomes `+`), and the sidebar shows it. A detached checkout for "
+    "reading (`--detach`, or a commit that is not a branch) is not blocked."
 )
 DENY_MAIN_AGENT = (
     "Inside herdr, the user installed these hooks so that an agent working in its own worktree runs as a herdr "
@@ -112,6 +117,27 @@ def deny_sub(owner, repo=None):
 
 
 DENY_SUB = deny_sub(NEW)
+ROLE_MAIN = (
+    "You are the orchestrator of this herdr session. Every task you hand to another agent, even a single ticket, "
+    "runs as a herdr worker: its own worktree and its own claude in the user's sidebar, where the user can watch it "
+    f"and step in. You start, follow and clean up those workers with the {SKILL} skill. Implementation subagents "
+    "belong inside the workers, not here: when another skill tells you to dispatch a subagent for a ticket or task, "
+    "that dispatch is a worker, and that skill's rules go into the worker's brief."
+)
+
+
+def role_worker(name):
+    return (f"You are herdr worker `{name}`, working on one task in your own worktree; subagents you start for it "
+            "work there too. The orchestrator that started you owns everything outside it: work that belongs "
+            "elsewhere goes back to it as a HERDR-HANDOFF block in your `## Result`. Workers do not start workers "
+            "or create worktrees.")
+
+
+def note_entered(label):
+    return (f"herdr shows this worktree in the sidebar as workspace `{label}`. You keep working in this session; "
+            "a claude that a herdr plugin started in that workspace is a separate, idle session.")
+
+
 NOTE_HANDOFF = (
     f"If this subagent returns a HERDR-HANDOFF block, load the {SKILL} skill and handle it by the block's "
     "`owner:` line (step 0, Receiving a handoff). Do not tell the user to run anything with `!` or to turn "
@@ -276,7 +302,8 @@ def run_herdr(args):
 
 def register(event, env, probe, runs, main_of, herdr):
     """R8: show the worktree Claude Code just made (EnterWorktree) in the herdr sidebar, and close its workspace
-    once ExitWorktree has removed it. Claude Code's own worktree handling is left exactly as it is."""
+    once ExitWorktree has removed it. Claude Code's own worktree handling is left exactly as it is. Returns the
+    sidebar label of a workspace it opened, else None."""
     resp = event.get("tool_response")
     path = resp.get("worktreePath") if isinstance(resp, dict) else None
     if not isinstance(path, str) or not path:
@@ -296,9 +323,9 @@ def register(event, env, probe, runs, main_of, herdr):
             if not main:
                 return
             loc = ["--cwd", main]
-        herdr(["worktree", "open", *loc, "--path", path, "--label", os.path.basename(path.rstrip(os.sep)),
-               "--no-focus"])
-        return
+        label = os.path.basename(path.rstrip(os.sep))
+        opened = herdr(["worktree", "open", *loc, "--path", path, "--label", label, "--no-focus"])
+        return label if opened else None
     if resp.get("action") != "remove" or os.path.exists(path):
         return                                         # kept, or still on disk: the workspace still shows it
     rp = os.path.realpath(path)
@@ -419,8 +446,15 @@ def decide(event, env, probe=git_probe, runs=None, main_of=owners.main_checkout_
         if tool in ("Agent", "Task") and who == "main":
             return {"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": NOTE_HANDOFF}}
         if tool in ("EnterWorktree", "ExitWorktree") and who == "main":
-            register(event, env, probe, runs, main_of, herdr or run_herdr)
+            label = register(event, env, probe, runs, main_of, herdr or run_herdr)
+            if label:
+                return {"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": note_entered(label)}}
         return None
+    if hook == "SessionStart":
+        if who not in ("main", "worker"):
+            return None                          # a subagent's own start, should one ever reach here
+        text = role_worker(env[WORKER_VAR]) if who == "worker" else ROLE_MAIN
+        return {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": text}}
     if hook != "PreToolUse":
         return None
     if creates_worktree(tool, args):

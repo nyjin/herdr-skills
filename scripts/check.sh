@@ -84,11 +84,11 @@ check_finalize_brief() {
 }
 
 # The route.py hook as Claude Code calls it: silent outside herdr, denies a branch `git worktree add` inside it,
-# lets a detached checkout and the main session's EnterWorktree through, leaves look-alikes alone, and exits
-# before any work for the plain main session's Bash.
+# lets a detached checkout and the main session's EnterWorktree through, leaves look-alikes alone, exits
+# before any work for the plain main session's Bash, and tells a session started inside herdr its role.
 check_hooks() {
   local r="$SKILL/scripts/hooks/route.py" data ev post
-  jq -e '.hooks.PreToolUse and .hooks.PostToolUse and .hooks.PostToolUseFailure and (.hooks.SessionStart | not)' \
+  jq -e '.hooks.PreToolUse and .hooks.PostToolUse and .hooks.PostToolUseFailure and .hooks.SessionStart' \
     hooks/hooks.json >/dev/null || { echo "::error file=hooks/hooks.json::unexpected hook events"; return 1; }
   data=$(mktemp -d)
   pre() { printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":%s}}' "$PWD" "$1"; }
@@ -110,6 +110,12 @@ check_hooks() {
   post='{"hook_event_name":"PostToolUse","cwd":"'"$PWD"'","tool_name":"Bash","duration_ms":10,"tool_input":{"command":"ls"},"tool_response":{"stdout":""}}'
   [ -z "$(echo "$post" | HERDR_ENV=1 HERDR_SKILLS_DATA_HOME="$data" python3 -S "$r" post-tool-use-bash)" ] \
     || { echo "::error::route.py did not exit early for the main session's Bash"; return 1; }
+  ev='{"hook_event_name":"SessionStart","cwd":"'"$PWD"'","source":"startup"}'
+  echo "$ev" | HERDR_ENV=1 HERDR_SKILLS_DATA_HOME="$data" python3 -S "$r" session-start \
+    | jq -e '.hookSpecificOutput.additionalContext | startswith("You are the orchestrator")' >/dev/null \
+    || { echo "::error::route.py did not tell the main session its role"; return 1; }
+  [ -z "$(echo "$ev" | env -u HERDR_ENV python3 -S "$r" session-start)" ] \
+    || { echo "::error::route.py printed a role outside herdr"; return 1; }
 }
 
 check_runs() {

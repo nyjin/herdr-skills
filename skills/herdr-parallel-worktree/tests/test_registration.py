@@ -37,15 +37,16 @@ class RegistrationTest(unittest.TestCase):
         ("PostToolUse", "Agent|Task|EnterWorktree|ExitWorktree"): "post-tool-use",
         ("PostToolUse", "Bash"): "post-tool-use-bash",
         ("PostToolUseFailure", "Bash"): "post-tool-use-failure",
+        ("SessionStart", None): "session-start",
     }
 
     def test_every_command_is_guarded_and_names_its_argument(self):
         for event, groups in self.plugin.items():
             for g in groups:
                 for h in g["hooks"]:
-                    with self.subTest(event=event, matcher=g["matcher"], cmd=h["command"]):
+                    with self.subTest(event=event, matcher=g.get("matcher"), cmd=h["command"]):
                         self.assertTrue(h["command"].startswith(GUARD + "python3 -S "))
-                        self.assertTrue(h["command"].endswith(" " + self.ARGS[(event, g["matcher"])]))
+                        self.assertTrue(h["command"].endswith(" " + self.ARGS[(event, g.get("matcher"))]))
 
     def test_expected_matchers(self):
         pre = [(g["matcher"], g["hooks"][0].get("if")) for g in self.plugin["PreToolUse"]]
@@ -57,6 +58,8 @@ class RegistrationTest(unittest.TestCase):
         self.assertEqual([g["matcher"] for g in self.plugin["PostToolUse"]],
                          ["Agent|Task|EnterWorktree|ExitWorktree", "Bash"])
         self.assertEqual([g["matcher"] for g in self.plugin["PostToolUseFailure"]], ["Bash"])
+        # no matcher: every start (startup, resume, clear, compact) restates the role
+        self.assertEqual([g.get("matcher") for g in self.plugin["SessionStart"]], [None])
 
     def test_route_accepts_exactly_the_registered_arguments(self):
         import importlib.util

@@ -19,7 +19,7 @@ with open(os.path.join(ROOT, "hooks", "hooks.json")) as f:
 
 
 def command(event, matcher):
-    cmd = next(g for g in HOOKS[event] if g["matcher"] == matcher)["hooks"][0]["command"]
+    cmd = next(g for g in HOOKS[event] if g.get("matcher") == matcher)["hooks"][0]["command"]
     return cmd.replace("${CLAUDE_PLUGIN_ROOT}", ROOT)
 
 
@@ -66,6 +66,9 @@ def main():
         ("subagent Bash Post, no path mentioned", ms(bash, post("ls -la", True), base), 80),
         ("worker Bash Post, no path mentioned", ms(bash, post("make test", False), worker), 80),
         ("subagent Bash Post, mentions a 3000-file worktree", ms(bash, post(f"cat {wt}/d1/f1.txt", True), base), 300),
+        ("SessionStart, main session (once per start)",
+         ms(command("SessionStart", None), {"hook_event_name": "SessionStart", "cwd": repo, "source": "startup"},
+            base), 150),
     ]
     subprocess.run(["rm", "-rf", tmp])
     bad = False

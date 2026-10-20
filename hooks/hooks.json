@@ -60,6 +60,16 @@
           }
         ]
       }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ \"$HERDR_ENV\" = 1 ] || exit 0; python3 -S \"${CLAUDE_PLUGIN_ROOT}/skills/herdr-parallel-worktree/scripts/hooks/route.py\" session-start"
+          }
+        ]
+      }
     ]
   }
 }
