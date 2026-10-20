@@ -219,6 +219,7 @@ Workers start working immediately, so doing this step task by task still runs th
   - `working`, `idle`, `done`: `herdr agent rename "$P" <name>`
   - `blocked`: assign the name, then handle the dialog as below
   - empty (claude not detected): look at the screen with `herdr pane read "$P" --source visible --lines 40`, report to the user, and stop
+- **`agent_pane_busy`**: herdr found something besides the shell in the foreground, usually a prompt hook (mise, direnv, …) that runs again after `cat`. Wait a second and run the same `agent start` again, up to three times. If it persists, read the pane with `herdr pane read "$P" --source visible --lines 20`, report what it shows, and stop.
 - **`agent_not_ready` or `blocked`**: a dialog is open on the worker's screen. Check it with `herdr agent read <name> --source visible --lines 40` and **never answer it yourself.** Tell the user what the screen shows and let them handle it in that workspace in the sidebar. Once the dialog closes, confirm the worker picks up its positional instructions with `herdr agent wait <name> --until working --until idle --until done --timeout 120000` (herdr reports a finished turn as either `idle` or `done`) and `agent read`.
   - **Folder trust dialog** ("Is this a project you trust?"): Claude Code does not yet trust the source repository. It does not appear for worktrees of trusted repositories, and `--dangerously-skip-permissions` does not skip it
   - **Permission mode warning**: shown once to users running `--dangerously-skip-permissions` for the first time

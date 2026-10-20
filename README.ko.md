@@ -11,7 +11,7 @@
 <!-- skills:start -->
 | 스킬 | 설명 |
 |---|---|
-| [`herdr-parallel-worktree`](skills/herdr-parallel-worktree/SKILL.md) | herdr 안에서 여러 작업을 병렬로 진행합니다. 작업마다 git worktree workspace와 눈에 보이는 `claude` 작업자를 하나씩 띄워, 사이드바에서 각각의 진행을 볼 수 있습니다. 작업자 지시서는 바꿀 수 있는 템플릿으로 만들고, 설정은 기본값으로 바로 동작하고, 처음 실행할 때 바꿀 수 있는 설정을 안내합니다. 끝난 작업자는 정리했다가 나중에 이름으로 다시 열 수 있으며, 대화 내용도 그대로 이어집니다. |
+| [`herdr-parallel-worktree`](skills/herdr-parallel-worktree/SKILL.md) | herdr 안에서 코딩 작업을 눈에 보이는 작업자에게 맡깁니다. 작업마다 git worktree workspace와 `claude` 작업자를 하나씩 띄워, 사이드바에서 각각의 진행을 보고 직접 들어가 볼 수 있습니다. PR 전에 직접 리뷰할 티켓 한 건에도, 여러 작업을 병렬로 돌릴 때에도 쓰며, herdr 플러그인이 만든 탭은 그대로 둡니다. 작업자 지시서는 바꿀 수 있는 템플릿으로 만들고, 설정은 기본값으로 바로 동작하고, 처음 실행할 때 바꿀 수 있는 설정을 안내합니다. 끝난 작업자는 정리했다가 나중에 이름으로 다시 열 수 있으며, 대화 내용도 그대로 이어집니다. |
 <!-- skills:end -->
 
 ## 설치
@@ -72,7 +72,8 @@ npx skills add nyjin/herdr-skills -s herdr-parallel-worktree -a claude-code -g
 
 `herdr-parallel-worktree`는 스킬 설명(description)을 일부러 짧게 둡니다. 설명은 herdr 밖의 세션까지 포함해 모든 Claude Code 세션에 들어가기 때문입니다. 대신 훅이 스킬이 제때 쓰이게 하고, 이 훅들은 herdr 안(`HERDR_ENV=1`)에서만 동작합니다.
 
-- **세션 자신의 worktree**: `EnterWorktree`는 막지 않습니다. Claude Code가 평소대로 worktree를 만들고, 그 직후 PostToolUse 훅이 그 worktree를 herdr 사이드바에 엽니다. `ExitWorktree`로 지우면 훅이 그 workspace를 닫습니다. 브랜치 없이 읽기용으로 만드는 `git worktree add`(detached checkout)도 통과합니다. 메인 세션의 그 밖의 `git worktree add`는 `EnterWorktree`를 쓰라고 안내합니다. `claude --worktree`로 시작할 때 만든 worktree는 도구 호출을 거치지 않으므로 사이드바에 나타나지 않습니다.
+- **SessionStart**: 세션이 시작할 때 자기 역할을 한 문단으로 알려 줍니다. 메인 세션은 오케스트레이터로서 작업을 넘길 때는 티켓 한 건이라도 지켜볼 수 있는 작업자로 띄우고, 다른 스킬이 "티켓마다 서브에이전트를 띄우라"고 해도 작업자로 띄웁니다. 작업자는 자기 이름과, worktree 밖의 일은 handoff로 돌려준다는 것을 듣습니다.
+- **세션 자신의 worktree**: `EnterWorktree`는 이 세션 자체를 worktree로 옮기고 싶을 때를 위해 막지 않습니다. Claude Code가 평소대로 `.claude/worktrees/<name>`에 `worktree-<name>` 브랜치로 만들고, 그 직후 PostToolUse 훅이 그 worktree를 herdr 사이드바에 열고 라벨을 세션에 알려 줍니다. `ExitWorktree`로 지우면 훅이 그 workspace를 닫습니다. 브랜치 없이 읽기용으로 만드는 `git worktree add`(detached checkout)도 통과합니다. 메인 세션의 그 밖의 `git worktree add`는 같은 안내로 막습니다. 작업은 작업자에게 가고, 작업자의 worktree는 저장소 관례를 따릅니다. `claude --worktree`로 시작할 때 만든 worktree는 도구 호출을 거치지 않으므로 사이드바에 나타나지 않습니다.
 - **PreToolUse**: 다른 에이전트에게 자기 worktree에서 일을 맡기는 것은 스킬을 거칩니다. 메인 세션의 worktree 격리 서브에이전트는 막고 스킬로 안내합니다. worktree를 만들려는 서브에이전트는 멈춰서 작업을 `HERDR-HANDOFF` 블록으로 돌려주고, 스킬이 띄운 워커는 직접 작업하라는 안내를 받습니다. `EnterWorktree`로 이미 있는 worktree에 들어가는 것은 막지 않습니다. 서브에이전트나 워커가 자기 worktree 밖의 파일을 고치려 해도 같은 방식으로 막고, 그곳의 주인이 누구인지 알려 줍니다.
 - **PostToolUse**: 서브에이전트나 워커가 Bash 명령을 실행한 뒤, 그 명령이 다른 worktree의 경로를 언급했고 실행 중에 그곳이 실제로 바뀌었으면 멈추고 그 부분을 돌려주게 합니다. 읽기만 한 경우는 그대로 둡니다. 메인 세션이 서브에이전트를 띄우면, 돌아온 `HERDR-HANDOFF` 블록을 어떻게 처리할지 한 줄로 알려 줍니다.
 

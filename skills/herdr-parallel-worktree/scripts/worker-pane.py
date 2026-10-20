@@ -14,7 +14,9 @@ queue. So the worker never uses those panes:
    such handler within --quiet-ms, no plugin reacted. A tab created before a plugin runs can make it skip its
    layout, so this comes first.
 2. Create a tab labelled N in workspace W, cwd WT, with HERDR_PW_WORKER=N in its environment.
-3. Wait until the tab's shell owns the terminal's foreground, i.e. it is at its prompt.
+3. Wait until the tab's shell is idle at its prompt: the shell is the only foreground process, twice in a row.
+   Owning the foreground is not enough: prompt hooks (mise, direnv, ...) run in the shell's own process group,
+   and herdr refuses `agent start` with `agent_pane_busy` while one runs.
 
 Prints JSON: {"tab", "pane", "settled", "handlers": [{"plugin", "event", "status"}], "still_running": [...],
 "shell_ready"}. A plugin still running at --timeout-ms or a shell not ready in time is reported, not fatal: the
@@ -70,15 +72,21 @@ def settle(since, timeout_ms, quiet_ms, poll_ms):
         time.sleep(poll_ms / 1000)
 
 
+def idle_shell(info):
+    shell = info.get("shell_pid")
+    procs = [p.get("pid") for p in info.get("foreground_processes") or []]
+    return bool(shell) and info.get("foreground_process_group_id") == shell and set(procs) <= {shell}
+
+
 def shell_ready(pane, timeout_ms, poll_ms):
-    start = time.monotonic()
+    start, streak = time.monotonic(), 0
     while True:
         try:
-            info = herdr("pane", "process-info", "--pane", pane).get("process_info") or {}
-            if info.get("shell_pid") and info.get("foreground_process_group_id") == info.get("shell_pid"):
-                return True
+            streak = streak + 1 if idle_shell(herdr("pane", "process-info", "--pane", pane).get("process_info") or {}) else 0
         except RuntimeError:
-            pass
+            streak = 0
+        if streak >= 2:
+            return True
         if (time.monotonic() - start) * 1000 >= timeout_ms:
             return False
         time.sleep(poll_ms / 1000)

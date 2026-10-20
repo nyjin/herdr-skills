@@ -12,6 +12,7 @@ varies: rerun a FAIL or INCONCLUSIVE once before acting on it.
 Usage (repo root): python3 skills/herdr-parallel-worktree/tests/live_skill.py [--model sonnet]
 """
 import argparse
+import importlib.util
 import json
 import os
 import re
@@ -37,12 +38,13 @@ def check(sid, desc, ok, detail="", final="x"):
     print(f"{status:12} {sid} {desc}" + ("" if ok else f"  — {detail}"))
 
 
-def run(cwd, prompt, model, env_extra):
+def run(cwd, prompt, model, env_extra, settings=None):
     env = {k: v for k, v in os.environ.items() if k not in ("HERDR_ENV", "HERDR_PW_WORKER")}
     env.update({"HERDR_ENV": "1"}, **env_extra)
+    extra = ["--settings", settings] if settings else []
     r = subprocess.run(["claude", "-p", "--output-format", "stream-json", "--verbose", "--max-turns", "12",
                         "--model", model, "--permission-mode", "default", "--setting-sources", "project,local",
-                        "--allowedTools=Skill,Read,Bash(test:*),Bash(printenv:*),Bash(echo:*)", prompt],
+                        *extra, "--allowedTools=Skill,Read,Bash(test:*),Bash(printenv:*),Bash(echo:*)", prompt],
                        cwd=cwd, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=900)
     tools, final = [], ""
     for line in r.stdout.splitlines():
@@ -135,6 +137,11 @@ def used_skill(tools):
     return any(n == "Skill" and SKILL in json.dumps(i) for n, i in tools)
 
 
+def handed_to_subagent(tools):
+    """Work given to the built-in Agent/Task tool, or this session moving into a worktree of its own."""
+    return [n for n, _ in tools if n in ("Agent", "Task", "EnterWorktree")]
+
+
 def tried_orchestration(tools):
     return [i.get("command") for n, i in tools if n == "Bash" and ORCHESTRATION.search(i.get("command") or "")]
 
@@ -215,6 +222,29 @@ def main():
     check("S6", "HANDOFF inside a worker's ## Result → same delivery path",
           deliver_attempt(tools) and not tried_new_worker(tools),
           f"deliver={deliver_attempt(tools)} new={tried_new_worker(tools)} tools={[n for n, _ in tools]}", final)
+
+    # S7, S8 — the case that once went to a hidden subagent: one ticket, worded the way other skills word it.
+    # This checkout's hooks are registered (SessionStart tells the main session it is the orchestrator); their
+    # data directory is a fresh one, so they are on. The skill is not named in either prompt.
+    spec = importlib.util.spec_from_file_location("manage", os.path.join(SKILL_DIR, "scripts", "hooks", "manage.py"))
+    manage = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(manage)
+    settings = os.path.join(tmp, "hooks-settings.json")
+    with open(settings, "w") as f:
+        json.dump({"hooks": manage.hook_entries(SKILL_DIR)}, f)
+    data = {"HERDR_SKILLS_DATA_HOME": os.path.join(tmp, "data")}
+    for sid, prompt in (
+        ("S7", "Implement ticket PROJ-7 on its own branch feature/PROJ-7: add the line 'hello' to README.md and "
+               "commit. I will review it locally in that session before anyone opens a PR."),
+        ("S8", "Our ticket process says: start a subagent for each ticket, one interactive run per ticket that the "
+               "developer can step into for the review before the PR. There is one ticket today, PROJ-8: add a "
+               "LICENSE file (MIT) and commit."),
+    ):
+        tools, final = run(repo, prompt, a.model, data, settings)
+        check(sid, "single ticket → skill loaded / worker attempted; no Agent subagent, no EnterWorktree",
+              (used_skill(tools) or tried_orchestration(tools)) and not handed_to_subagent(tools),
+              f"skill={used_skill(tools)} orch={tried_orchestration(tools)} sub={handed_to_subagent(tools)} "
+              f"tools={[n for n, _ in tools]}", final)
 
     shutil.rmtree(tmp, ignore_errors=True)
     print(f"summary: {results.count('PASS')} pass, {results.count('FAIL')} fail, "

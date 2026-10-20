@@ -65,7 +65,7 @@ herdr agent start <name> --kind <agent> --pane "$P" --timeout 20000 -- <worker a
 
 The tab's `HERDR_PW_WORKER` marks the resumed claude as worker `<name>`, exactly as for a new worker. `--add-dir "$BRIEFS"` lets it read follow-up files (`references/deliver.md`); drop it for an agent that has no such option.
 
-`config.json`'s `workerArgs` were written for the agent the worker was started with; pass them only if they belong to this agent. If there is a follow-up instruction ("resume proj-101 and fix the failing test", or a handoff for this worker), resume without it first, then deliver it with `references/deliver.md` steps 2, 4 and 5: a file plus one line, which a resumed worker follows with its earlier conversation intact (tested). Handle `timeout`, `blocked` and `agent_not_ready` exactly as in SKILL.md step 3.
+`config.json`'s `workerArgs` were written for the agent the worker was started with; pass them only if they belong to this agent. If there is a follow-up instruction ("resume proj-101 and fix the failing test", or a handoff for this worker), resume without it first, then deliver it with `references/deliver.md` steps 2, 4 and 5: a file plus one line, which a resumed worker follows with its earlier conversation intact (tested). Handle `timeout`, `agent_pane_busy`, `blocked` and `agent_not_ready` exactly as in SKILL.md step 3.
 
 ## 4. Verify, record and report
 

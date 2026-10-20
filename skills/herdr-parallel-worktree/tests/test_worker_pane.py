@@ -35,8 +35,10 @@ if args[:2] == ["tab", "create"]:
         print(json.dumps({"error": {"code": "workspace_not_found"}}), file=sys.stderr); sys.exit(1)
     print(json.dumps({"result": {"tab": {"tab_id": "w1:t9"}, "root_pane": {"pane_id": "w1:p9"}}})); sys.exit(0)
 if args[:2] == ["pane", "process-info"]:
-    ready = pop("ready")
-    print(json.dumps({"result": {"process_info": {"shell_pid": 10, "foreground_process_group_id": 10 if ready else 11}}}))
+    ready = pop("ready")   # true: only the shell; "hook": a prompt hook in the shell's group; false: a program
+    procs = [{"pid": 10, "name": "zsh"}] + ([{"pid": 12, "name": "mise"}] if ready == "hook" else [])
+    print(json.dumps({"result": {"process_info": {"shell_pid": 10, "foreground_process_group_id": 11 if ready is False else 10,
+                                                  "foreground_processes": procs if ready is not False else [{"pid": 11, "name": "claude"}]}}}))
     sys.exit(0)
 print(json.dumps({"error": {"code": "unsupported"}}), file=sys.stderr); sys.exit(1)
 '''
@@ -121,11 +123,18 @@ class WorkerPaneTest(unittest.TestCase):
         self.assertEqual(out["still_running"], ["slow"])
         self.assertEqual(len(self.tab_create()), 1)
 
-    def test_waits_until_the_new_shell_owns_the_foreground(self):
-        rc, out, err = self.run_script([[]], (False, False, True))
+    def test_waits_until_the_new_shell_is_idle_twice_in_a_row(self):
+        rc, out, err = self.run_script([[]], (False, True, False, True, True))
         self.assertEqual(rc, 0, err)
         self.assertTrue(out["shell_ready"])
-        self.assertEqual(sum(c[:2] == ["pane", "process-info"] for c in self.calls()), 3)
+        self.assertEqual(sum(c[:2] == ["pane", "process-info"] for c in self.calls()), 5)
+
+    def test_a_prompt_hook_in_the_shells_group_is_not_idle(self):
+        # measured: `mise` from the prompt hook shares the shell's group, and herdr then answers agent_pane_busy
+        rc, out, err = self.run_script([[]], ("hook", "hook", True, True))
+        self.assertEqual(rc, 0, err)
+        self.assertTrue(out["shell_ready"])
+        self.assertEqual(sum(c[:2] == ["pane", "process-info"] for c in self.calls()), 4)
 
     def test_shell_never_ready_is_reported_not_hidden(self):
         rc, out, err = self.run_script([[]], (False,))
