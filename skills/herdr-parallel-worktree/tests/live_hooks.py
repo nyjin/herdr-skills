@@ -39,7 +39,6 @@ sys.path.insert(0, HERE)
 import fake_herdr  # noqa: E402
 
 results = []
-FIRST_DISPATCH_LEAD = "Inside herdr, the user installed these hooks"
 # The hooks stop a session's first dispatch from a main checkout once; runs that test what a subagent does tell
 # the model to send the same Agent call again.
 RESEND = " If the Agent call is refused once, call it again with exactly the same arguments, unchanged."
@@ -100,6 +99,11 @@ def roles(log):
     return [o.get("additionalContext") for o in outputs(log) if o.get("hookEventName") == "SessionStart"]
 
 
+def is_first_dispatch(d):
+    """The first-dispatch deny, told apart from other denies by the text only route.deny_first_dispatch has."""
+    return d.get("permissionDecisionReason", "").startswith(route.deny_first_dispatch("").split("saved at ")[0])
+
+
 def denied_with(log, text):
     return any(d.get("permissionDecisionReason") == text for d in decisions(log))
 
@@ -149,7 +153,7 @@ def main():
         f"with this prompt: 'Run this Bash command exactly: `git -C {repo} worktree add {new_wt} -b fix/live`. "
         "Then add a line to README.md there and commit.' Wait for it to finish. Then reply with the subagent's "
         "final message verbatim and nothing else. Do not run any command yourself." + RESEND), set1, a.model, herdr)
-    attempted = bool(decisions(log1)) or os.path.exists(new_wt)
+    attempted = any(not is_first_dispatch(d) for d in decisions(log1)) or os.path.exists(new_wt)
     if denied_with(log1, route.DENY_SUB):
         check("C1", "subagent worktree creation denied with DENY_SUB", "PASS")
     else:
@@ -319,12 +323,12 @@ def main():
         f"prompt: '{sent}' If the call is refused, call the Agent tool again with exactly the same arguments, "
         "unchanged, and do not do anything else about the refusal. Wait for it, then reply done."),
         set10, a.model, herdr)
-    first = [d for d in decisions(log10) if d.get("permissionDecisionReason", "").startswith(FIRST_DISPATCH_LEAD)]
+    first = [d for d in decisions(log10) if is_first_dispatch(d)]
     briefs = sorted(glob.glob(os.path.join(data, "herdr-parallel-worktree", "briefs", "dispatch-*.md")))
     saved = [b for b in briefs if sent in open(b).read().split("## Prompt", 1)[-1]]
     check("C27", "the first dispatch is denied once and its prompt is saved under briefs/",
           "PASS" if len(first) == 1 and saved and saved[0] in first[0]["permissionDecisionReason"]
-          else ("FAIL" if first or briefs else "INCONCLUSIVE"), f"denies={len(first)} briefs={briefs}")
+          else ("FAIL" if first or saved else "INCONCLUSIVE"), f"denies={len(first)} saved={saved}")
     check("C28", "the same dispatch sent again in the session is not denied",
           "PASS" if len(first) == 1 and os.path.exists(marker) else ("FAIL" if len(first) > 1 else "INCONCLUSIVE"),
           f"denies={len(first)} marker={os.path.exists(marker)}")
