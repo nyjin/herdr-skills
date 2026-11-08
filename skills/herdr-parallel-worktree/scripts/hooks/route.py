@@ -52,6 +52,9 @@ import owners  # noqa: E402
 
 SKILL = "herdr-parallel-worktree"
 WORKER_VAR = "HERDR_PW_WORKER"
+SKILL_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+GUIDE = os.path.join(SKILL_DIR, "references", "dispatch.md")
+READ_ONLY_AGENTS = ("Explore", "Plan", "claude-code-guide")   # searches and questions: never a tab
 
 
 def owner_label(owner):
@@ -106,6 +109,15 @@ DENY_MAIN_AGENT = (
     f"whether to bypass it. Load the {SKILL} skill and start the worker without asking first; tell the user what "
     "you started afterwards."
 )
+
+
+def deny_first_dispatch(draft):
+    return ("Inside herdr, the user installed these hooks so that a task handed to another agent runs as a herdr "
+            "tab they can watch, not as a hidden subagent. Nothing is lost: this dispatch (description, model and "
+            f"prompt) is saved at {draft}. Read {GUIDE} and start the tab with that file as the brief's "
+            "instructions, then carry on with the user's request from where you were. Do not ask the user first, "
+            "and do not suggest turning the hooks off. This happens once per session: a search or a question you "
+            "meant for a subagent can be sent again unchanged.")
 
 
 def deny_sub(owner, repo=None):
@@ -378,6 +390,56 @@ def home_of(cwd, probe):
     return found[2] if found else cwd
 
 
+class DispatchStore:
+    """Sessions whose first task dispatch was already stopped: one file per session. Never raises."""
+
+    def __init__(self, path):
+        self.path = path
+
+    def _file(self, session_id):
+        return os.path.join(self.path, re.sub(r"[^0-9A-Za-z_-]", "_", session_id))
+
+    def seen(self, session_id):
+        try:
+            return os.path.exists(self._file(session_id))
+        except Exception:
+            return False
+
+    def mark(self, session_id):
+        try:
+            os.makedirs(self.path, exist_ok=True)
+            with open(self._file(session_id), "w"):
+                pass
+        except Exception:
+            pass
+
+
+def real_dispatch_store():
+    import tempfile
+    return DispatchStore(os.path.join(tempfile.gettempdir(), "herdr-pw-dispatch"))
+
+
+def save_draft(env, session_id, tool_input, now=time.time):
+    """Write a dispatch (description, model, prompt) to DATA_DIR/briefs and return the path; None on any failure."""
+    try:
+        base = env.get("HERDR_SKILLS_DATA_HOME") or os.path.expanduser("~/.local/share/herdr-skills")
+        briefs = os.path.join(base, SKILL, "briefs")
+        os.makedirs(briefs, exist_ok=True)
+        stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime(now()))
+        short = re.sub(r"[^0-9A-Za-z_-]", "_", session_id)[:8] or "-"
+        path = os.path.join(briefs, f"dispatch-{short}-{stamp}.md")
+        text = ("# Dispatch draft\n\n"
+                f"- subagent_type: {tool_input.get('subagent_type') or '-'}\n"
+                f"- model: {tool_input.get('model') or '-'}\n"
+                f"- description: {tool_input.get('description') or '-'}\n\n"
+                f"## Prompt\n{tool_input.get('prompt') or ''}\n")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+        return path
+    except Exception:
+        return None
+
+
 def creates_worktree(tool, args):
     return bool((tool == "Bash" and WORKTREE_ADD.search(code_only(args.get("command") or "")))
                 or (tool == "EnterWorktree" and not args.get("path"))
@@ -424,7 +486,7 @@ def repo_of(own, runs, writer_main):
 
 
 def decide(event, env, probe=git_probe, runs=None, main_of=owners.main_checkout_of, deps=None, herdr=None,
-           refs=None):
+           refs=None, store=None, save=None):
     hook, tool = event.get("hook_event_name"), event.get("tool_name")
     args = event.get("tool_input") or {}
     who = actor(event, env)
@@ -472,6 +534,17 @@ def decide(event, env, probe=git_probe, runs=None, main_of=owners.main_checkout_
         if who == "worker":
             return deny(deny_worker_create(env[WORKER_VAR], home_of(cwd, probe)))
         return deny(DENY_SUB)
+    if tool in ("Agent", "Task") and who == "main" and args.get("subagent_type") not in READ_ONLY_AGENTS:
+        home = probe(cwd)
+        sid = event.get("session_id")
+        if home and home[0] == home[1] and isinstance(sid, str) and sid:
+            store = store or real_dispatch_store()
+            if not store.seen(sid):
+                draft = (save or save_draft)(env, sid, args)
+                if draft:
+                    store.mark(sid)
+                    return deny(deny_first_dispatch(draft))
+        return None
     if tool in WRITE_TOOLS:
         return write_target(event, env, probe, runs, main_of)
     return None

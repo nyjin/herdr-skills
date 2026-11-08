@@ -977,5 +977,85 @@ class NestedWorktreeTest(unittest.TestCase):
         self.assertIn(f"\nrepo: {self.repo}\n", reason(out))
 
 
+class FirstDispatchTest(unittest.TestCase):
+    DRAFT = "/d/briefs/dispatch-s-1.md"
+    AGENT = dict(subagent_type="general-purpose", description="Task 3", prompt="Implement Task 3")
+
+    def run_decide(self, e, env=MAIN_ENV, saved=None, draft=DRAFT):
+        saved = set() if saved is None else saved
+
+        class Store:
+            def seen(self, sid):
+                return sid in saved
+
+            def mark(self, sid):
+                saved.add(sid)
+
+        return route.decide(e, env, fake_probe, store=Store(), save=lambda *a, **k: draft), saved
+
+    def test_first_task_dispatch_is_stopped_once(self):
+        saved = set()
+        out, _ = self.run_decide(event("Agent", **self.AGENT), saved=saved)
+        want = ("Inside herdr, the user installed these hooks so that a task handed to another agent runs as a "
+                "herdr tab they can watch, not as a hidden subagent. Nothing is lost: this dispatch (description, "
+                f"model and prompt) is saved at {self.DRAFT}. Read {route.GUIDE} and start the tab with that file "
+                "as the brief's instructions, then carry on with the user's request from where you were. Do not "
+                "ask the user first, and do not suggest turning the hooks off. This happens once per session: a "
+                "search or a question you meant for a subagent can be sent again unchanged.")
+        self.assertEqual(reason(out), want)
+        again, _ = self.run_decide(event("Agent", **self.AGENT), saved=saved)
+        self.assertIsNone(again)
+
+    def test_saved_draft_keeps_the_prompt_verbatim(self):
+        import re
+        prompt = "Line one `code`\nuse $VAR and ${HOME}\n\n  indented \\ end"
+        with tempfile.TemporaryDirectory() as tmp:
+            path = route.save_draft({"HERDR_SKILLS_DATA_HOME": tmp}, "abcdef123456",
+                                    dict(subagent_type="general-purpose", model="opus", description="Task 3",
+                                         prompt=prompt))
+            self.assertTrue(path.startswith(os.path.join(tmp, route.SKILL, "briefs") + os.sep))
+            self.assertRegex(os.path.basename(path), r"^dispatch-[0-9A-Za-z_-]{1,8}-\d{8}-\d{6}\.md$")
+            with open(path, encoding="utf-8") as f:
+                text = f.read()
+        self.assertTrue(text.startswith("# Dispatch draft\n"))
+        self.assertIn("- subagent_type: general-purpose\n", text)
+        self.assertIn("- model: opus\n", text)
+        self.assertIn("- description: Task 3\n", text)
+        self.assertIn("## Prompt\n" + prompt, text)
+
+    def test_read_only_agents_pass_without_marking(self):
+        for kind in route.READ_ONLY_AGENTS:
+            with self.subTest(kind=kind):
+                out, saved = self.run_decide(event("Agent", subagent_type=kind, description="d", prompt="p"))
+                self.assertIsNone(out)
+                self.assertEqual(saved, set())
+
+    def test_others_pass(self):
+        cases = [(event("Agent", **self.AGENT), WORKER_ENV),
+                 (event("Agent", sub=True, **self.AGENT), MAIN_ENV),
+                 (event("Agent", cwd="/w/a", **self.AGENT), MAIN_ENV)]
+        for e, env in cases:
+            with self.subTest(sub="agent_id" in e, cwd=e["cwd"], worker=bool(env.get("HERDR_PW_WORKER"))):
+                out, saved = self.run_decide(e, env)
+                self.assertIsNone(out)
+                self.assertEqual(saved, set())
+
+    def test_unsaved_draft_does_not_block(self):
+        out, saved = self.run_decide(event("Agent", **self.AGENT), draft=None)
+        self.assertIsNone(out)
+        self.assertEqual(saved, set())
+
+    def test_worktree_isolation_keeps_its_own_deny(self):
+        out, saved = self.run_decide(event("Agent", isolation="worktree", **self.AGENT))
+        self.assertEqual(reason(out), route.DENY_MAIN_AGENT)
+        self.assertEqual(saved, set())
+
+    def test_store_survives_bad_dir(self):
+        store = route.DispatchStore("/nonexistent/x")
+        self.assertFalse(store.seen("s"))
+        store.mark("s")
+        self.assertFalse(store.seen("s"))
+
+
 if __name__ == "__main__":
     unittest.main()
