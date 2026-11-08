@@ -81,6 +81,9 @@ check_finalize_brief() {
   printf '# [t] x\n\n## Goal\ndone\n' > "$t"
   python3 "$s" "$t" >/dev/null || { echo "::error::a filled brief should pass"; return 1; }
   tail -1 "$t" | grep -q 'Do not push or open a pull request.' || { echo "::error::closing paragraph missing"; return 1; }
+  printf '# [t] x\n\n## Goal\ndone\n' > "$t"
+  python3 "$s" "$t" --outside /o/data "shared output" >/dev/null && grep -q '^## Environment$' "$t" \
+    || { echo "::error::--outside should create the Environment section"; return 1; }
 }
 
 # The route.py hook as Claude Code calls it: silent outside herdr, denies a branch `git worktree add` inside it,

@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
 """Finalize a filled worker brief.
 
-Usage: finalize-brief.py <brief file>
+Usage: finalize-brief.py BRIEF [--role TEXT] [--worktree PATH] [--branch NAME] [--outside PATH REASON]... [--then FILE]
 
 1. Strip HTML comments (guidance) outside code blocks.
 2. Fail on leftover placeholders ({{...}}), [NEEDS CLARIFICATION ...] markers, or sections with no content.
 3. Remove any existing closing paragraph and append it exactly once at the end.
+4. With --role, --worktree, --branch or --outside, write (or replace) the "## Environment" section right after the
+   title. With --then, write (or replace) the "## On completion" section from that file, just before the closing paragraph.
 
 On success, rewrite the file and print its path. On failure, leave the file untouched, print the reasons to stderr, and exit 1.
 """
+import argparse
+import os
 import re
 import sys
 
@@ -84,11 +88,59 @@ def check(text):
     return problems
 
 
+def drop_section(lines, title):
+    """Remove the level-2 section `title` (up to the next heading of level 1-2)."""
+    while title in lines:
+        i = lines.index(title)
+        j = next((k for k in range(i + 1, len(lines)) if re.match(r"^#{1,2}\s", lines[k])), len(lines))
+        del lines[i:j]
+    return lines
+
+
+def environment_block(args):
+    out = ["## Environment", ""]
+    if args.role:
+        out.append(f"- Role: {args.role}")
+    if args.worktree:
+        out.append(f"- Worktree: `{args.worktree}`" + (f" (branch `{args.branch}`)" if args.branch else ""))
+    elif args.branch:
+        out.append(f"- Branch: `{args.branch}`")
+    for p, reason in args.outside or []:
+        out.append(f"- Outside path: `{p}` \u2014 {reason}")
+    return out if len(out) > 2 else []
+
+
+def parse_args():
+    ap = argparse.ArgumentParser(prog="finalize-brief.py", description=__doc__.strip().split("\n")[0])
+    ap.add_argument("brief", metavar="BRIEF", help="the filled brief file (rewritten in place)")
+    ap.add_argument("--role", help="the worker's role, written to the Environment section")
+    ap.add_argument("--worktree", metavar="PATH", help="the worker's worktree path")
+    ap.add_argument("--branch", metavar="NAME", help="the worker's branch, written after the worktree path")
+    ap.add_argument("--outside", nargs=2, action="append", metavar=("PATH", "REASON"),
+                    help="an absolute path outside the worktree the worker may use, and why (repeatable)")
+    ap.add_argument("--then", metavar="FILE",
+                    help="file whose content becomes the On completion section, placed before the closing paragraph")
+    return ap.parse_args()
+
+
 def main():
-    if len(sys.argv) != 2:
-        print(__doc__.strip(), file=sys.stderr)
-        return 2
-    path = sys.argv[1]
+    args = parse_args()
+    path = args.brief
+    for p, _ in args.outside or []:
+        if not os.path.isabs(p):
+            print(f"{path}: --outside path must be absolute: {p}", file=sys.stderr)
+            return 1
+    then = None
+    if args.then:
+        try:
+            with open(args.then, encoding="utf-8") as f:
+                then = f.read().rstrip("\n")
+        except OSError as e:
+            print(f"{args.then}: cannot read --then file: {e.strerror}", file=sys.stderr)
+            return 1
+        if not then.strip():
+            print(f"{args.then}: --then file is empty", file=sys.stderr)
+            return 1
     try:
         with open(path, encoding="utf-8") as f:
             text = f.read()
@@ -101,7 +153,16 @@ def main():
         print(f"{path}: {e}", file=sys.stderr)
         return 1
     body = "\n".join(l for l in body.splitlines() if l.strip() != TAIL)
-    body = re.sub(r"\n{3,}", "\n\n", body).strip()
+    lines = body.splitlines()
+    env = environment_block(args)
+    if env:
+        drop_section(lines, "## Environment")
+        at = next((i + 1 for i, l in enumerate(lines) if l.startswith("# ")), 0)
+        lines[at:at] = ([""] if at else []) + env + [""]
+    if then is not None:
+        drop_section(lines, "## On completion")
+        lines += ["", "## On completion", "", then]
+    body = re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
     problems = check(body)
     if problems:
         print(f"{path}: not finalized", file=sys.stderr)
