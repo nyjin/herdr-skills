@@ -908,6 +908,14 @@ class EarlyExitTest(unittest.TestCase):
         out, imported = self.run_route("pre-tool-use", payload)
         self.assertIn("deny", out)
 
+    def test_plain_prompt_stops_before_json(self):
+        out, imported = self.run_route("user-prompt-submit", '{"prompt": "hello"}')
+        self.assertEqual(out, "")
+        self.assertNotIn("json", imported)
+        out, imported = self.run_route("user-prompt-submit",
+                                       '{"prompt": "/superpowers:subagent-driven-development"}')
+        self.assertIn("json", imported)
+
     def test_empty_or_broken_input(self):
         for payload in ("", "\x00\xff not json"):
             for arg in ("post-tool-use-bash", "pre-tool-use"):
@@ -1102,6 +1110,33 @@ class SkillNoteTest(unittest.TestCase):
                     with open(path, "w") as f:
                         f.write(text)
                     self.assertEqual(route.read_config(env), want)
+
+
+class SlashNoteTest(unittest.TestCase):
+    SDD = "superpowers:subagent-driven-development"
+
+    def submit(self, prompt, env=MAIN_ENV):
+        e = {"hook_event_name": "UserPromptSubmit", "session_id": "s", "cwd": "/r", "prompt": prompt}
+        return route.decide(e, env, fake_probe)
+
+    def test_slash_prompt_adds_note(self):
+        out = self.submit("/" + self.SDD + " go")
+        self.assertEqual(out["hookSpecificOutput"]["hookEventName"], "UserPromptSubmit")
+        self.assertEqual(out["hookSpecificOutput"]["additionalContext"], route.note_dispatch_skill(self.SDD))
+
+    def test_other_or_plain_prompt_gets_nothing(self):
+        for prompt in ("/superpowers:brainstorming", "hello /" + self.SDD, ""):
+            with self.subTest(prompt=prompt):
+                self.assertIsNone(self.submit(prompt))
+
+    def test_worker_gets_nothing(self):
+        self.assertIsNone(self.submit("/" + self.SDD + " go", WORKER_ENV))
+
+    def test_slash_skill(self):
+        self.assertEqual(route.slash_skill("  /a:b c"), "a:b")
+        self.assertEqual(route.slash_skill("/a"), "a")
+        self.assertIsNone(route.slash_skill("a /b"))
+        self.assertIsNone(route.slash_skill("/"))
 
 
 if __name__ == "__main__":

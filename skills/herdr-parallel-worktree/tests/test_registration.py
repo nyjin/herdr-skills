@@ -38,6 +38,7 @@ class RegistrationTest(unittest.TestCase):
         ("PostToolUse", "Bash"): "post-tool-use-bash",
         ("PostToolUseFailure", "Bash"): "post-tool-use-failure",
         ("SessionStart", None): "session-start",
+        ("UserPromptSubmit", None): "user-prompt-submit",
     }
 
     def test_every_command_is_guarded_and_names_its_argument(self):
@@ -60,6 +61,7 @@ class RegistrationTest(unittest.TestCase):
         self.assertEqual([g["matcher"] for g in self.plugin["PostToolUseFailure"]], ["Bash"])
         # no matcher: every start (startup, resume, clear, compact) restates the role
         self.assertEqual([g.get("matcher") for g in self.plugin["SessionStart"]], [None])
+        self.assertEqual([g.get("matcher") for g in self.plugin["UserPromptSubmit"]], [None])
 
     def test_route_accepts_exactly_the_registered_arguments(self):
         import importlib.util

@@ -88,7 +88,7 @@ check_finalize_brief() {
 # before any work for the plain main session's Bash, and tells a session started inside herdr its role.
 check_hooks() {
   local r="$SKILL/scripts/hooks/route.py" data ev post
-  jq -e '.hooks.PreToolUse and .hooks.PostToolUse and .hooks.PostToolUseFailure and .hooks.SessionStart' \
+  jq -e '.hooks.PreToolUse and .hooks.PostToolUse and .hooks.PostToolUseFailure and .hooks.SessionStart and .hooks.UserPromptSubmit' \
     hooks/hooks.json >/dev/null || { echo "::error file=hooks/hooks.json::unexpected hook events"; return 1; }
   data=$(mktemp -d)
   pre() { printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":%s}}' "$PWD" "$1"; }
@@ -119,6 +119,8 @@ check_hooks() {
     || { echo "::error::route.py did not tell the main session its role"; return 1; }
   [ -z "$(echo "$ev" | env -u HERDR_ENV python3 -S "$r" session-start)" ] \
     || { echo "::error::route.py printed a role outside herdr"; return 1; }
+  [ -z "$(echo '{"prompt":"hello"}' | HERDR_ENV=1 HERDR_SKILLS_DATA_HOME="$data" python3 -S "$r" user-prompt-submit)" ] \
+    || { echo "::error::route.py printed output for a plain prompt"; return 1; }
 }
 
 check_runs() {

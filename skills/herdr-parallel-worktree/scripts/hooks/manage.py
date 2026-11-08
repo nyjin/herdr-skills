@@ -93,6 +93,9 @@ def hook_entries(skill_dir):
         "SessionStart": [
             group(None, "session-start"),
         ],
+        "UserPromptSubmit": [
+            group(None, "user-prompt-submit"),
+        ],
     }
 
 

@@ -15,6 +15,8 @@ Usage (from a hooks config):
   route.py post-tool-use-bash     PostToolUse / PostToolUseFailure Bash: tell a subagent or worker that its command
   route.py post-tool-use-failure  changed a worktree outside its own (R7, observe.py), so it stops and hands it back.
   route.py session-start          SessionStart: tell the session its role, orchestrator or worker <name> (R9).
+  route.py user-prompt-submit     UserPromptSubmit in the main session: a prompt that starts with `/<dispatching skill>`
+                                  gets a pointer to the dispatch guide; any other prompt ends before json is imported.
 
 Who called: HERDR_PW_WORKER (exported by the skill into each worker's pane) marks a herdr worker; `agent_id`
 in the hook input marks a subagent. Owners come from DATA_DIR/runs.json (owners.py).
@@ -30,14 +32,20 @@ import sys
 # with neither `"agent_id"` in the raw input nor HERDR_PW_WORKER set ends here, before json or git are even
 # imported: these hooks fire on every edit and every Bash command inside herdr.
 NON_MAIN_ARGS = ("pre-tool-use-write", "post-tool-use-bash", "post-tool-use-failure")
-ALL_ARGS = ("pre-tool-use", "post-tool-use", "session-start") + NON_MAIN_ARGS
+ALL_ARGS = ("pre-tool-use", "post-tool-use", "session-start", "user-prompt-submit") + NON_MAIN_ARGS
 EVENT_OF_ARG = {"pre-tool-use": "PreToolUse", "pre-tool-use-write": "PreToolUse", "post-tool-use": "PostToolUse",
                 "post-tool-use-bash": "PostToolUse", "post-tool-use-failure": "PostToolUseFailure",
-                "session-start": "SessionStart"}
+                "session-start": "SessionStart", "user-prompt-submit": "UserPromptSubmit"}
 _RAW = None
 if __name__ == "__main__" and len(sys.argv) == 2 and sys.argv[1] in NON_MAIN_ARGS:
     _RAW = sys.stdin.buffer.read()
     if b'"agent_id"' not in _RAW and not os.environ.get("HERDR_PW_WORKER"):
+        sys.exit(0)
+elif __name__ == "__main__" and len(sys.argv) == 2 and sys.argv[1] == "user-prompt-submit":
+    # Fires on every prompt: only one that starts with `/` (a slash command) can concern us.
+    import re  # noqa: E402
+    _RAW = sys.stdin.buffer.read()
+    if not re.search(rb'"prompt"\s*:\s*"\s*/', _RAW):
         sys.exit(0)
 
 import json  # noqa: E402
@@ -156,6 +164,14 @@ DISPATCH_SKILLS = ("superpowers:subagent-driven-development", "superpowers:dispa
 def note_dispatch_skill(skill):
     return (f"Inside herdr, {skill} hands each task to an agent; here each of those agents runs as a herdr tab the "
             f"user can watch. Before the first dispatch, read {GUIDE}.")
+
+
+def slash_skill(prompt):
+    """The skill name in a prompt that starts (after spaces) with `/name`, else None."""
+    text = prompt.lstrip() if isinstance(prompt, str) else ""
+    if not text.startswith("/"):
+        return None
+    return text.split(None, 1)[0][1:] or None
 
 
 def dispatch_skills(cfg):
@@ -533,6 +549,14 @@ def decide(event, env, probe=git_probe, runs=None, main_of=owners.main_checkout_
             label = register(event, env, probe, runs, main_of, herdr or run_herdr)
             if label:
                 return {"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": note_entered(label)}}
+        return None
+    if hook == "UserPromptSubmit":
+        if who != "main":
+            return None
+        skill = slash_skill(event.get("prompt"))
+        if skill and skill in dispatch_skills(read_config(env) if cfg is None else cfg):
+            return {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit",
+                                           "additionalContext": note_dispatch_skill(skill)}}
         return None
     if hook == "SessionStart":
         if who not in ("main", "worker"):
