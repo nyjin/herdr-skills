@@ -142,15 +142,19 @@ ROLE_MAIN = (
     "runs as a herdr worker: its own worktree and its own claude in the user's sidebar, where the user can watch it "
     f"and step in. You start, follow and clean up those workers with the {SKILL} skill. Implementation subagents "
     "belong inside the workers, not here: when another skill tells you to dispatch a subagent for a ticket or task, "
-    "that dispatch is a worker, and that skill's rules go into the worker's brief."
+    "that dispatch is a worker (see the skill's references/dispatch.md), and that skill's rules go into the worker's brief."
 )
 
 
 def role_worker(name):
-    return (f"You are herdr worker `{name}`, working on one task in your own worktree; subagents you start for it "
-            "work there too. The orchestrator that started you owns everything outside it: work that belongs "
-            "elsewhere goes back to it as a HERDR-HANDOFF block in your `## Result`. Workers do not start workers "
-            "or create worktrees.")
+    return (f"You are herdr worker `{name}`. Your brief says where you work and what you may touch outside it. "
+            "Do not start workers or create worktrees: herdr runs you in a tab, and nested workers break it. "
+            "Do not write where another session works (another worker's worktree, the main checkout, or a "
+            "repository your brief does not list); anything needed there goes back to the orchestrator in your "
+            "`## Result`, as a HERDR-HANDOFF block when it is code work. Never send anything to the orchestrator's "
+            "pane: it is the user's conversation. A step your brief tells you to take, such as sending a re-review "
+            "request to another tab, is yours to take. If your brief asks for something this rules out, say so in "
+            "your `## Result` instead of doing it.")
 
 
 def note_entered(label):

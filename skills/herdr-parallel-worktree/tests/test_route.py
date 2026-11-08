@@ -638,9 +638,13 @@ class SessionStartTest(unittest.TestCase):
         self.assertIn("even a single ticket", route.ROLE_MAIN)
         self.assertIn(route.SKILL, route.ROLE_MAIN)
         self.assertIn("that dispatch is a worker", route.ROLE_MAIN)
+        self.assertIn("references/dispatch.md", route.ROLE_MAIN)
         w = route.role_worker("w1")
         self.assertIn("`w1`", w)
         self.assertIn("HERDR-HANDOFF", w)
+        self.assertIn("orchestrator's pane", w)
+        self.assertIn("brief tells you to take", w)
+        self.assertIn("nested workers", w)
         for m in (route.ROLE_MAIN, w):
             self.assertNotIn("confirm", m.lower())
             self.assertNotIn("`!", m)
