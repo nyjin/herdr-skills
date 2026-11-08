@@ -645,6 +645,31 @@ class SessionStartTest(unittest.TestCase):
             self.assertNotIn("`!", m)
 
 
+class OtherTabsWorktreeTest(unittest.TestCase):
+    """A tab whose cwd is a worktree that belongs to another tab (the reviewer in the implementer's) must not write."""
+    RUNS = [{"name": "p-impl", "worktree": "/w/a", "state": "open"}]
+
+    @staticmethod
+    def env(name):
+        return {"HERDR_ENV": "1", "HERDR_PW_WORKER": name, "HERDR_SKILLS_DATA_HOME": NO_DATA}
+
+    def write(self, name, sub=False, runs=RUNS):
+        return decide_fake(event("Write", sub=sub, cwd="/w/a", file_path="/w/a/x.py"), self.env(name), runs)
+
+    def test_reviewer_tab_cannot_write_in_the_implementers_worktree(self):
+        self.assertEqual(reason(self.write("p-rev")), route.deny_not_your_worktree("p-rev", "/w/a", "p-impl"))
+
+    def test_its_subagent_too(self):
+        self.assertEqual(reason(self.write("p-rev", sub=True)),
+                         route.deny_not_your_worktree("p-rev", "/w/a", "p-impl"))
+
+    def test_owner_tab_writes_its_worktree(self):
+        self.assertIsNone(self.write("p-impl"))
+
+    def test_unrecorded_worktree_unchanged(self):
+        self.assertIsNone(self.write("p-rev", runs=[]))
+
+
 class SpecMatrixTest(unittest.TestCase):
     """Every rule for every caller, cell by cell. Keep this table identical to §3 of
     docs/superpowers/specs/2026-10-13-register-claude-worktrees-design.md (R1-R3 changed for the main session)."""

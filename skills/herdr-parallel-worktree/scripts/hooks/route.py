@@ -202,6 +202,12 @@ def deny_worker_write(name, home, owner, repo=None):
             "on:\n\n" + handoff(owner, repo))
 
 
+def deny_not_your_worktree(name, home, owner):
+    return (f"You are herdr tab `{name}`, working in `{home}`, which belongs to `{owner}`. Only `{owner}` writes "
+            "here, so two tabs never edit the same files. Do not change files here, and do not retry another way; "
+            "put what should change in your `## Result` or your verdict file instead.")
+
+
 def observed(who, hits, env, home, repo=None):
     """R7: what a subagent or worker is told after its Bash command changed worktrees outside its own."""
     changed = "; ".join(where(own) for _, own in hits)
@@ -495,6 +501,10 @@ def write_target(event, env, probe, runs, main_of):
     rp = os.path.realpath(path)
     if runs is None:
         runs = owners.read_open_runs(owners.runs_path(env))
+    if env.get(WORKER_VAR) and owners.inside(rp, home_top):
+        mine = owners.run_owning(home_top, runs)
+        if mine and mine["name"] != env[WORKER_VAR]:
+            return deny(deny_not_your_worktree(env[WORKER_VAR], home_top, mine["name"]))
     inner = owners.run_owning(rp, runs)
     if owners.inside(rp, home_top) and not observe.nested_root(rp, home_top) \
             and not (inner and inner["worktree"] != home_top and owners.inside(inner["worktree"], home_top)):
