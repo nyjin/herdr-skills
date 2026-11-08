@@ -12,7 +12,9 @@ The hook stops only the first dispatch of a session. Every later one (the next t
 
 ## 2. Tabs per role
 
-`<plan>` is a short name for the plan: SKILL.md's name rule, at most 26 characters so `<plan>-impl2` still fits.
+This pair of tabs per plan is for a sequential plan, such as `superpowers:subagent-driven-development`. Independent tasks dispatched in parallel (for example by `superpowers:dispatching-parallel-agents`) each become their own worker as in SKILL.md, one workspace per task.
+
+`<plan>` is a short name for the plan: SKILL.md's name rule, at most 27 characters so `<plan>-impl` still fits.
 
 - **One workspace per plan**, made with SKILL.md steps 1–3 (after step 0's checks), with section 4's brief in place of step 2's template: `<plan>` as step 1's `--label`, the plan's branch as `--branch`. Every task's commits stack on that branch. When the other skill asks for an isolated worktree for the plan, this is it.
 - **Implementer tab `<plan>-impl`**: step 3 with `<plan>-impl` as the name, recorded with `runs.py add --name <plan>-impl`.
@@ -35,9 +37,18 @@ The hook stops only the first dispatch of a session. Every later one (the next t
 | dispatch a reviewer, the first time | start `<plan>-rev` |
 | dispatch a reviewer again, or the final reviewer | a follow-up to `<plan>-rev` |
 | send findings back to the implementer, or resume it to fix | a follow-up to `<plan>-impl` that hands over the re-review (section 5) |
-| dispatch a new agent for the work (for example a stronger model) | a new tab `<plan>-impl2` (below) |
+| dispatch a fresh implementer (for example a stronger model) | a new `<plan>-impl` tab in place of the old one (below) |
 
-A new implementing agent gets a new tab `<plan>-impl2` in the same workspace, started like the reviewer tab with that model (`--model`). Only the recorded tab may write in the worktree, so move the record to it: `runs.py mark-cleaned --root "$ROOT" --name <plan>-impl`, then `runs.py add --name <plan>-impl2` with the same root, branch, base, from-branch, worktree and workspace, and its own pane. From then on it stands wherever this guide says `<plan>-impl`.
+A fresh implementer keeps the name `<plan>-impl`, so the hooks and the reviewer tab still know it. Close the old tab (its pane is in `runs.py show --root "$ROOT" --name <plan>-impl`), then open a new one with the same name in the same workspace:
+
+```bash
+herdr tab close "$(herdr pane get <old pane> | jq -r .result.pane.tab_id)"
+SINCE="$(python3 -c 'import time; print(int(time.time() * 1000))')"
+PANE="$(python3 "<skill directory>/scripts/worker-pane.py" --workspace "$W" --worktree "$WT" --name <plan>-impl --since "$SINCE")"
+P="$(printf '%s' "$PANE" | jq -r .pane)"
+```
+
+Start claude there as in SKILL.md step 3, with the requested `--model` (above), and a new brief (section 4) whose instructions are the new dispatch's prompt plus the path of the previous implementer's report. Then record where it is: `runs.py relocate --root "$ROOT" --name <plan>-impl --workspace "$W" --pane "$P"`. The old conversation is no longer on screen, but its record is kept: its report in `$BRIEFS/<plan>/` and the `<plan>-impl` entry in `runs.json`.
 
 ## 3. Files
 
