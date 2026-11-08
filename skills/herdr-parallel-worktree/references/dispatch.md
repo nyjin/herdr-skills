@@ -16,7 +16,7 @@ This pair of tabs per plan is for a sequential plan, such as `superpowers:subage
 
 `<plan>` is a short name for the plan: SKILL.md's name rule, at most 27 characters so `<plan>-impl` still fits.
 
-- **One workspace per plan**, made with SKILL.md steps 1–3 (after step 0's checks), with section 4's brief in place of step 2's template: `<plan>` as step 1's `--label`, the plan's branch as `--branch`. Every task's commits stack on that branch. When the other skill asks for an isolated worktree for the plan, this is it.
+- **One workspace per plan**, made with SKILL.md steps 1–3 (after step 0's checks), with section 4's brief in place of step 2's template: `<plan>` as step 1's `--label`, and as `--branch` a new branch for `<plan>`, named by the repository's convention and based on the current `HEAD` (step 1's `BASE`). The branch you are on stays as it is: it is what `FROM_BRANCH` records and what the work merges back to. Every task's commits stack on the new branch. When the other skill asks for an isolated worktree for the plan, this is it.
 - **Implementer tab `<plan>-impl`**: step 3 with `<plan>-impl` as the name, recorded with `runs.py add --name <plan>-impl`.
 - **Reviewer tab `<plan>-rev`**, in the same workspace and worktree, started at the first review:
 
@@ -35,7 +35,7 @@ This pair of tabs per plan is for a sequential plan, such as `superpowers:subage
 | dispatch the implementer of the first task | start `<plan>-impl` |
 | dispatch the implementer of the next task | a follow-up to `<plan>-impl` (`deliver.md` steps 2, 4 and 5); never a new tab |
 | dispatch a reviewer, the first time | start `<plan>-rev` |
-| dispatch a reviewer again, or the final reviewer | a follow-up to `<plan>-rev` |
+| dispatch a reviewer again, or the final reviewer | a follow-up to `<plan>-rev` (`deliver.md` steps 2, 4 and 5; `<plan>-rev` has no record, so skip steps 1 and 3) |
 | send findings back to the implementer, or resume it to fix | a follow-up to `<plan>-impl` that hands over the re-review (section 5) |
 | dispatch a fresh implementer (for example a stronger model) | a new `<plan>-impl` tab in place of the old one (below) |
 
@@ -59,7 +59,8 @@ mkdir -p "$BRIEFS/<plan>"
 
 Shell variables do not survive between Bash calls: set `BRIEFS` again in each call that uses it.
 
-- Reports, review packages and verdicts go in `$BRIEFS/<plan>/`. Every tab can read and write there (`--add-dir "$BRIEFS"`), and it is outside git. Name files by task and round so they never repeat: `report-t3.md`, `review-t3-1.md`.
+- Reports, review packages and verdicts go in `$BRIEFS/<plan>/`. Every tab can read and write there (`--add-dir "$BRIEFS"`), and it is outside git. Name files by task and round so they never repeat; this guide writes that as `<n>`, where `t3-1` is task 3, round 1 (`report-t3.md`, `review-t3-1.md`).
+- **Every review names its verdict file**, `$BRIEFS/<plan>/review-<n>.md`: the hop (section 5) and your wait (section 6) rely on it. When the other skill's reviewer prompt names none (it asks for the verdict as the final reply), add one line to that brief or follow-up: `Also write your verdict to <BRIEFS>/<plan>/review-<n>.md.`, with the absolute path.
 - Where the other skill's prompt puts a report or verdict anywhere else, point that path into `$BRIEFS/<plan>/`: the hooks stop a tab that writes in a checkout that is not its own.
 - Anything every tab must read that is not committed at the plan's base (a spec written after it, for example) goes there too.
 - The other skill's ledger (progress file, task list) stays where that skill keeps it. Only you write it.
@@ -68,7 +69,7 @@ Shell variables do not survive between Bash calls: set `BRIEFS` again in each ca
 
 `<tab>` is the tab's name (`<plan>-impl`, `<plan>-rev`). Its first brief is `$BRIEFS/<tab>-$(date +%Y%m%d-%H%M%S).md`; later work for it is a follow-up, `$BRIEFS/<tab>-followup-$(date +%Y%m%d-%H%M%S).md` (`deliver.md` step 2). Keep these names: the hooks find a tab's outside paths by them.
 
-- **Instructions**: the dispatch's prompt, verbatim: the draft's `## Prompt` text, or the prompt the other skill gave you. Write it with the Write tool under the title `# [<tab>] <the dispatch's description>`. No template: the prompt already is the instructions. Change only report and verdict paths (section 3). The reviewer tab's first brief also gets the section in section 5.
+- **Instructions**: the dispatch's prompt, verbatim: the draft's `## Prompt` text, or the prompt the other skill gave you. Write it with the Write tool under the title `# [<tab>] <the dispatch's description>`. No template: the prompt already is the instructions. Change or add only report and verdict paths (section 3). The reviewer tab's first brief also gets the section in section 5.
 - **Environment**: finalize with the tab's role, worktree, branch and the shared folder. When the task writes in another repository, add `--outside <absolute path> "<why>"` for each such path; without it, the hooks stop that write.
 
   ```bash
