@@ -24,6 +24,7 @@ FAKE = {
     "/w/a": ("/r/.git/worktrees/a", "/r/.git", "/w/a"),
     "/w/b": ("/r/.git/worktrees/b", "/r/.git", "/w/b"),
     "/w/c": ("/r/.git/worktrees/c", "/r/.git", "/w/c"),
+    "/o": ("/o/.git", "/o/.git", "/o"),
 }
 
 
@@ -778,6 +779,39 @@ class R4OwnerMatrixTest(unittest.TestCase):
     def test_relative_path_resolves_against_cwd(self):
         out = decide_fake(event("Edit", cwd="/w/a", file_path="../b/f.py"), WORKER_ENV, self.RUNS)
         self.assertEqual(reason(out), route.deny_worker_write("w1", "/w/a", self.WORKER, "/r"))
+
+
+class OutsidePathTest(unittest.TestCase):
+    """R4: a worker writes into another repository only where its brief lists the path under outside paths."""
+
+    def run_it(self, path, declared, env=WORKER_ENV, sub=False):
+        e = event("Write", sub=sub, cwd="/w/b", file_path=path)
+        return route.decide(e, env, fake_probe, runs=[], main_of=lambda p: "/r", declared=declared)
+
+    def test_undeclared_other_repo_is_denied(self):
+        out = self.run_it("/o/f", lambda n: [])
+        self.assertEqual(reason(out), route.deny_undeclared("w1", "/o"))
+
+    def test_declared_other_repo_passes_on_boundaries(self):
+        declared = lambda n: ["/o/out"]
+        self.assertIsNone(self.run_it("/o/out/f", declared))
+        self.assertEqual(reason(self.run_it("/o/outside/f", declared)), route.deny_undeclared("w1", "/o"))
+
+    def test_outside_git_stays_free(self):
+        self.assertIsNone(self.run_it("/x/f", lambda n: []))
+
+    def test_declared_main_checkout_still_denied(self):
+        out = self.run_it("/r/f", lambda n: ["/r"])
+        self.assertIn("is in", reason(out))
+        self.assertNotIn("another repository", reason(out))
+
+    def test_worker_subagent_follows_the_same_rules(self):
+        out = self.run_it("/o/f", lambda n: [], sub=True)
+        self.assertEqual(reason(out), route.deny_undeclared("w1", "/o"))
+
+    def test_main_session_and_its_subagents_unchanged(self):
+        self.assertIsNone(self.run_it("/o/f", lambda n: [], env=MAIN_ENV))
+        self.assertIsNone(self.run_it("/o/f", lambda n: [], env=MAIN_ENV, sub=True))
 
 
 class ObserveDecideTest(unittest.TestCase):

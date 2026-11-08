@@ -208,6 +208,17 @@ def deny_not_your_worktree(name, home, owner):
             "put what should change in your `## Result` or your verdict file instead.")
 
 
+def deny_undeclared(name, top):
+    return (f"You are herdr tab `{name}`. `{top}` is another repository, and your brief does not list this path "
+            "under outside paths; another session may be working there. Do not write it, and do not retry another "
+            "way. Finish the rest of your task, and say in your `## Result` which path you needed and why, so the "
+            "orchestrator can add it to your brief.")
+
+
+def briefs_dir(env):
+    return os.path.join(os.path.dirname(owners.runs_path(env)), "briefs")
+
+
 def observed(who, hits, env, home, repo=None):
     """R7: what a subagent or worker is told after its Bash command changed worktrees outside its own."""
     changed = "; ".join(where(own) for _, own in hits)
@@ -484,7 +495,7 @@ def creates_worktree(tool, args):
                 or (tool in ("Agent", "Task") and args.get("isolation") == "worktree"))   # Task: Agent's older name
 
 
-def write_target(event, env, probe, runs, main_of):
+def write_target(event, env, probe, runs, main_of, declared=None):
     """R4: deny a subagent's or worker's Write/Edit outside its own worktree, by the owner of the target."""
     who = actor(event, env)
     args = event.get("tool_input") or {}
@@ -510,6 +521,13 @@ def write_target(event, env, probe, runs, main_of):
             and not (inner and inner["worktree"] != home_top and owners.inside(inner["worktree"], home_top)):
         return None                              # home itself, not a worktree nested inside it: no git call
     own = owners.owner_of(path, runs, probe, writer_common, writer_main)
+    if own is None and env.get(WORKER_VAR):
+        other = probe(path)                      # another repository: only the paths the brief lists
+        if other:
+            names = declared or (lambda n: owners.declared_outside(briefs_dir(env), n))
+            if not any(owners.inside(rp, d) for d in names(env[WORKER_VAR])):
+                return deny(deny_undeclared(env[WORKER_VAR], os.path.realpath(other[2])))
+        return None
     if own is None or os.path.realpath(own[2]) == home_top or (who == "sub" and own[0] == "main-checkout"):
         return None                              # out of scope, home, or the main session's home
     repo = repo_of(own, runs, writer_main)
@@ -528,7 +546,7 @@ def repo_of(own, runs, writer_main):
 
 
 def decide(event, env, probe=git_probe, runs=None, main_of=owners.main_checkout_of, deps=None, herdr=None,
-           refs=None, store=None, save=None, cfg=None):
+           refs=None, store=None, save=None, cfg=None, declared=None):
     hook, tool = event.get("hook_event_name"), event.get("tool_name")
     args = event.get("tool_input") or {}
     who = actor(event, env)
@@ -602,7 +620,7 @@ def decide(event, env, probe=git_probe, runs=None, main_of=owners.main_checkout_
                     return deny(deny_first_dispatch(draft))
         return None
     if tool in WRITE_TOOLS:
-        return write_target(event, env, probe, runs, main_of)
+        return write_target(event, env, probe, runs, main_of, declared)
     return None
 
 
