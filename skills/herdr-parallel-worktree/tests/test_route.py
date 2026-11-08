@@ -674,6 +674,13 @@ class OtherTabsWorktreeTest(unittest.TestCase):
     def test_unrecorded_worktree_unchanged(self):
         self.assertIsNone(self.write("p-rev", runs=[]))
 
+    def test_stale_record_at_the_same_path_does_not_block_the_owner(self):
+        runs = [{"name": "old", "worktree": "/w/a", "state": "open"},
+                {"name": "p-impl", "worktree": "/w/a", "state": "open"}]
+        self.assertIsNone(self.write("p-impl", runs=runs))
+        self.assertEqual(reason(self.write("p-rev", runs=runs)),
+                         route.deny_not_your_worktree("p-rev", "/w/a", "old"))
+
 
 class SpecMatrixTest(unittest.TestCase):
     """Every rule for every caller, cell by cell. Keep this table identical to §3 of

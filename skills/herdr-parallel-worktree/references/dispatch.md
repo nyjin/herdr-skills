@@ -4,7 +4,7 @@ Inside herdr, each agent another skill hands a task to runs as a herdr tab the u
 
 ## 1. When this applies
 
-- A hook stopped your first per-task `Agent` dispatch in this session and saved it to `$BRIEFS/dispatch-<session>-<time>.md`: `subagent_type`, `model` and `description` lines, and the prompt under `## Prompt`. Start the tab from it (sections 2–4), then carry on with the user's request where you were.
+- A hook stopped your first per-task `Agent` dispatch in this session and saved it to `$BRIEFS/dispatch-<session>-<time>.md`: `subagent_type`, `model` and `description` lines, and the prompt under `## Prompt`. Start the tab from it (sections 2–4), then carry on with the user's request where you were. Delete the `dispatch-*.md` draft once the tab's brief is written; drafts otherwise accumulate in `$BRIEFS`.
 - A note said a skill that dispatches an agent per task was loaded (for example `superpowers:subagent-driven-development`). At its first dispatch, start the tab instead of calling `Agent`.
 - Any other skill, inside herdr, tells you to dispatch, resume or message an agent for a task: an implementer, a reviewer, a fixer, a final reviewer.
 
@@ -48,7 +48,7 @@ PANE="$(python3 "<skill directory>/scripts/worker-pane.py" --workspace "$W" --wo
 P="$(printf '%s' "$PANE" | jq -r .pane)"
 ```
 
-Start claude there as in SKILL.md step 3, with the requested `--model` (above), and a new brief (section 4) whose instructions are the new dispatch's prompt plus the path of the previous implementer's report. Then record where it is: `runs.py relocate --root "$ROOT" --name <plan>-impl --workspace "$W" --pane "$P"`. The old conversation is no longer on screen, but its record is kept: its report in `$BRIEFS/<plan>/` and the `<plan>-impl` entry in `runs.json`.
+Start claude there as in SKILL.md step 3, with the requested `--model` (above), and a new brief (section 4) whose instructions are the new dispatch's prompt plus the path of the previous implementer's report. Then record where it is: `runs.py relocate --root "$ROOT" --name <plan>-impl --workspace "$W" --pane "$P"`. The old conversation is no longer on screen, but its report stays in `$BRIEFS/<plan>/` (and its transcript on disk).
 
 ## 3. Files
 
@@ -86,7 +86,7 @@ Shell variables do not survive between Bash calls: set `BRIEFS` again in each ca
 
 Fix → re-review is the only step a tab hands to another tab itself. Every other step comes back to you (section 6).
 
-When a review finds issues, send the fix to `<plan>-impl` as a follow-up (`deliver.md` steps 2, 4 and 5): the other skill's fix prompt, or the verdict file to fix, with the spec path and the test command. Write the text below to `$BRIEFS/<plan>/then-<n>.md` with the Write tool, and finalize the follow-up with it:
+When a review finds issues, send the fix to `<plan>-impl` as a follow-up (`deliver.md` steps 2, 4 and 5): the other skill's fix prompt, or the verdict file to fix, with the spec path and the test command. Write the text below to `$BRIEFS/<plan>/then-<n>.md` with the Write tool, and finalize the follow-up with it. The file must not contain `#` or `##` heading lines: `finalize-brief.py` replaces sections by heading, so a heading inside `--then` duplicates on a rerun.
 
 ```bash
 BRIEFS="${HERDR_SKILLS_DATA_HOME:-$HOME/.local/share/herdr-skills}/herdr-parallel-worktree/briefs"
@@ -134,5 +134,6 @@ In Claude Code, run it with the Bash tool's `run_in_background`: you are notifie
 
 ## 7. Not verified
 
+- The fresh-implementer flow (close the `<plan>-impl` tab, open a new one with the same name, `runs.py relocate`) has not been run live.
 - A hop sent while the reviewer tab is `working` should queue until its current turn ends, as a line from you to a working tab does (tested); a tab-to-tab send to a working tab was not tried.
 - A hop to a `blocked` reviewer tab: herdr rejects it with `agent_blocked` before sending anything (`herdr agent prompt --help`); not tried. The text above does not send in that case.

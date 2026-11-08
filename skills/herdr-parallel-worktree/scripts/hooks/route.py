@@ -518,7 +518,8 @@ def write_target(event, env, probe, runs, main_of, declared=None):
         runs = owners.read_open_runs(owners.runs_path(env))
     if env.get(WORKER_VAR) and owners.inside(rp, home_top):
         mine = owners.run_owning(home_top, runs)
-        if mine and mine["name"] != env[WORKER_VAR]:
+        if mine and mine["name"] != env[WORKER_VAR] \
+                and not any(r["name"] == env[WORKER_VAR] and r["worktree"] == mine["worktree"] for r in runs):
             return deny(deny_not_your_worktree(env[WORKER_VAR], home_top, mine["name"]))
     inner = owners.run_owning(rp, runs)
     if owners.inside(rp, home_top) and not observe.nested_root(rp, home_top) \

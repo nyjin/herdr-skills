@@ -114,7 +114,7 @@ The script:
 Options write two sections; a rerun replaces them:
 
 - `--role TEXT`, `--worktree PATH`, `--branch NAME` and `--outside PATH REASON` (repeatable) write `## Environment` right after the title. Each `--outside` becomes an `- Outside path:` line; the hooks let a worker write in another repository only under a path one of its briefs lists this way. The path must be absolute.
-- `--then FILE` writes `## On completion` from that file, just before the closing paragraph: what the worker does after committing, such as handing a re-review to another tab (`references/dispatch.md` section 5).
+- `--then FILE` writes `## On completion` from that file, just before the closing paragraph: what the worker does after committing, such as handing a re-review to another tab (`references/dispatch.md` section 5). The file must not contain `#` or `##` heading lines: sections are replaced by heading, so a heading inside it duplicates on a rerun.
 
 ```bash
 python3 "<skill directory>/scripts/finalize-brief.py" "$BRIEF" \
