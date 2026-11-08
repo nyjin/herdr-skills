@@ -7,6 +7,7 @@ How to build a worker brief. The work is split three ways:
 | **What** goes in a brief (sections, guidance) | the user can change it | template file |
 | **How** to fill it (rules) | the skill | this document |
 | Rules that cannot change (closing paragraph, leftover checks) | the skill | `scripts/finalize-brief.py` |
+| Environment and On completion sections | the skill | `finalize-brief.py` options |
 
 Why split it this way: everyone works differently, so the skill cannot dictate procedures such as which issue tracker or review tool to use. Conversely, rules the skill depends on, like the closing paragraph, could be deleted or altered if left to a user template.
 
@@ -109,6 +110,19 @@ The script:
 - strips HTML comments (guidance) outside code blocks
 - fails on leftover `{{...}}`, `[NEEDS CLARIFICATION` or sections with no content, reporting line numbers. Fix them and run it again
 - appends the closing paragraph exactly once at the end. If the template already contains it, it is removed and re-added
+
+Options write two sections; a rerun replaces them:
+
+- `--role TEXT`, `--worktree PATH`, `--branch NAME` and `--outside PATH REASON` (repeatable) write `## Environment` right after the title. Each `--outside` becomes an `- Outside path:` line; the hooks let a worker write in another repository only under a path one of its briefs lists this way. The path must be absolute.
+- `--then FILE` writes `## On completion` from that file, just before the closing paragraph: what the worker does after committing, such as handing a re-review to another tab (`references/dispatch.md` section 5).
+
+```bash
+python3 "<skill directory>/scripts/finalize-brief.py" "$BRIEF" \
+  --role "implementer" --worktree "$WT" --branch feature/PROJ-101 \
+  --outside "/abs/path/to/api-docs" "the API docs this ticket updates"
+```
+
+Templates do not contain these two headings: the script writes them.
 
 On failure the file is left unchanged. Fix the reported lines and run it again.
 

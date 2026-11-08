@@ -72,4 +72,6 @@ herdr agent get <name> | jq -r .result.agent.agent_status
 herdr agent prompt <name> "[<name>] Follow-up: read $FOLLOWUP and follow it."
 ```
 
+A single line like this arrives as a plain user message, not as pasted content (tested), so the worker takes it as the user's instruction.
+
 Check that it was taken up: `herdr agent read <name> --source recent-unwrapped --lines 40` should show the worker reading the file. Then tell the user, in one line, that `<name>` has the follow-up, and continue with SKILL.md steps 4 and 5 for that worker.
