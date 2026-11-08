@@ -11,6 +11,7 @@ fail open on unknown.
 """
 import json
 import os
+import re
 import subprocess
 
 SKILL = "herdr-parallel-worktree"
@@ -144,3 +145,50 @@ def owner_of(path, runs, probe, writer_common, writer_main, realpath=os.path.rea
     if writer_main and top == writer_main:       # the writer's own main checkout
         return ("main-checkout", None, top)
     return None
+
+
+OUTSIDE_LINE = re.compile(r"^- Outside path: `([^`]+)` ")
+HEADING = re.compile(r"^#{1,2} ")
+FENCE = re.compile(r"^\s*(```|~~~)")
+
+
+def brief_files(briefs_dir, name):
+    """Brief file names of worker `name` in `briefs_dir`, sorted: <name>-YYYYmmdd-HHMMSS.md and
+    <name>-followup-YYYYmmdd-HHMMSS.md. Longer names (<name>-2-...) and -ref.md files do not match.
+    Never raises: an unreadable directory is []."""
+    pattern = re.compile(r"^%s-(followup-)?\d{8}-\d{6}\.md$" % re.escape(name))
+    try:
+        return sorted(f for f in os.listdir(briefs_dir) if pattern.match(f))
+    except Exception:
+        return []
+
+
+def declared_outside(briefs_dir, name, realpath=os.path.realpath):
+    """Paths the briefs of worker `name` declare as outside its worktree: the "- Outside path: `P`" lines
+    of each brief's "## Environment" section (ends at the next level 1-2 heading; fenced code is skipped).
+    Resolved with `realpath`, each once, in first-seen order. Never raises: unreadable things are skipped."""
+    found = []
+    try:
+        for fname in brief_files(briefs_dir, name):
+            try:
+                with open(os.path.join(briefs_dir, fname), encoding="utf-8") as f:
+                    lines = f.read().splitlines()
+            except Exception:
+                continue
+            in_env = fenced = False
+            for line in lines:
+                if FENCE.match(line):
+                    fenced = not fenced
+                elif fenced:
+                    continue
+                elif HEADING.match(line):
+                    in_env = line.rstrip() == "## Environment"
+                elif in_env:
+                    m = OUTSIDE_LINE.match(line)
+                    if m:
+                        path = realpath(m.group(1))
+                        if path not in found:
+                            found.append(path)
+    except Exception:
+        return []
+    return found

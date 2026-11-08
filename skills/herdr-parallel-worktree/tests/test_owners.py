@@ -178,5 +178,64 @@ class RealGitTest(unittest.TestCase):
         self.assertIsNone(own(os.path.join(self.sep, "f.py")))   # another repository
 
 
+class DeclaredOutsideTest(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.d = self._tmp.name
+
+    def write(self, fname, text=""):
+        path = os.path.join(self.d, fname)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+        return path
+
+    def test_brief_files_ignore_longer_names(self):
+        for n in ("proj-20261108-120000.md", "proj-followup-20261108-130000.md",
+                  "proj-101-20261108-120000.md", "proj-20261108-120000-ref.md"):
+            self.write(n)
+        self.assertEqual(owners.brief_files(self.d, "proj"),
+                         ["proj-20261108-120000.md", "proj-followup-20261108-130000.md"])
+
+    def test_round_trip_with_finalize(self):
+        script = os.path.join(os.path.dirname(HERE), "scripts", "finalize-brief.py")
+        brief = self.write("w1-20261108-120000.md", "# Title\n\nbody\n")
+        out = os.path.join(self.d, "o")
+        r = subprocess.run([sys.executable, script, brief, "--outside", out, "r"],
+                           capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(owners.declared_outside(self.d, "w1"), [os.path.realpath(out)])
+
+    def test_outside_lines_elsewhere_are_ignored(self):
+        self.write("w1-20261108-120000.md",
+                   "# T\n\n## Environment\n\n- Outside path: `/a/in` \u2014 r\n\n"
+                   "## Steps\n\n- Outside path: `/a/out` \u2014 r\n")
+        self.write("w2-20261108-120000.md",
+                   "# T\n\n## Environment\n\n```\n- Outside path: `/a/fenced` \u2014 r\n```\n")
+        self.assertEqual(owners.declared_outside(self.d, "w1"), [os.path.realpath("/a/in")])
+        self.assertEqual(owners.declared_outside(self.d, "w2"), [])
+
+    def test_same_path_in_several_briefs_is_returned_once(self):
+        line = "# T\n\n## Environment\n\n- Outside path: `/a/x` \u2014 r\n"
+        self.write("w1-20261108-120000.md", line)
+        self.write("w1-followup-20261108-130000.md", line + "- Outside path: `/a/y` \u2014 r\n")
+        self.assertEqual(owners.declared_outside(self.d, "w1"),
+                         [os.path.realpath("/a/x"), os.path.realpath("/a/y")])
+
+    def test_never_raises(self):
+        self.assertEqual(owners.brief_files(os.path.join(self.d, "missing"), "w1"), [])
+        self.assertEqual(owners.declared_outside(os.path.join(self.d, "missing"), "w1"), [])
+        p = self.write("w1-20261108-120000.md", "## Environment\n- Outside path: `/a` \u2014 r\n")
+        os.chmod(p, 0)
+        self.addCleanup(os.chmod, p, 0o600)
+        self.assertEqual(owners.declared_outside(self.d, "w1"), [])
+        self.write("w2-20261108-120000.md")
+        with open(os.path.join(self.d, "w2-20261108-120000.md"), "wb") as f:
+            f.write(b"\xff\xfe## Environment\n")
+        self.assertEqual(owners.declared_outside(self.d, "w2"), [])
+        self.write("w3-20261108-120000.md", "## Environment\n- Outside path: `/a` \u2014 r\n")
+        self.assertEqual(owners.declared_outside(self.d, "w3", realpath=lambda p: 1 / 0), [])
+
+
 if __name__ == "__main__":
     unittest.main()
