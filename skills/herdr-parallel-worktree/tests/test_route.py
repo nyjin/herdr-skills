@@ -1057,5 +1057,52 @@ class FirstDispatchTest(unittest.TestCase):
         self.assertFalse(store.seen("s"))
 
 
+class SkillNoteTest(unittest.TestCase):
+    SDD = "superpowers:subagent-driven-development"
+
+    def load(self, skill, **kw):
+        return route.decide(event("Skill", hook="PostToolUse", skill=skill), MAIN_ENV, fake_probe, **kw)
+
+    def test_skill_tool_load_adds_note(self):
+        out = self.load(self.SDD)
+        self.assertEqual(out["hookSpecificOutput"]["hookEventName"], "PostToolUse")
+        self.assertEqual(out["hookSpecificOutput"]["additionalContext"], route.note_dispatch_skill(self.SDD))
+        self.assertIn(route.GUIDE, out["hookSpecificOutput"]["additionalContext"])
+        self.assertEqual(route.note_dispatch_skill(self.SDD),
+                         f"Inside herdr, {self.SDD} hands each task to an agent; here each of those agents runs as "
+                         f"a herdr tab the user can watch. Before the first dispatch, read {route.GUIDE}.")
+
+    def test_other_skill_gets_nothing(self):
+        self.assertIsNone(self.load("superpowers:brainstorming"))
+
+    def test_worker_and_subagent_get_nothing(self):
+        e = event("Skill", hook="PostToolUse", skill=self.SDD)
+        self.assertIsNone(route.decide(e, WORKER_ENV, fake_probe))
+        e = event("Skill", sub=True, hook="PostToolUse", skill=self.SDD)
+        self.assertIsNone(route.decide(e, MAIN_ENV, fake_probe))
+
+    def test_config_list_replaces_default(self):
+        self.assertEqual(route.dispatch_skills({"dispatchSkills": ["my:skill"]}), ("my:skill",))
+        for cfg in ({"dispatchSkills": "x"}, {"dispatchSkills": [1]}, {}):
+            with self.subTest(cfg=cfg):
+                self.assertEqual(route.dispatch_skills(cfg), route.DISPATCH_SKILLS)
+        cfg = {"dispatchSkills": ["my:skill"]}
+        self.assertIsNone(self.load(self.SDD, cfg=cfg))
+        out = self.load("my:skill", cfg=cfg)
+        self.assertEqual(out["hookSpecificOutput"]["additionalContext"], route.note_dispatch_skill("my:skill"))
+
+    def test_read_config_never_raises(self):
+        self.assertEqual(route.read_config(MAIN_ENV), {})
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, route.SKILL))
+            path = os.path.join(d, route.SKILL, "config.json")
+            env = {"HERDR_SKILLS_DATA_HOME": d}
+            for text, want in (("{not json", {}), ("[1, 2]", {}), ('{"hooks": "off"}', {"hooks": "off"})):
+                with self.subTest(text=text):
+                    with open(path, "w") as f:
+                        f.write(text)
+                    self.assertEqual(route.read_config(env), want)
+
+
 if __name__ == "__main__":
     unittest.main()

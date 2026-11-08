@@ -34,7 +34,7 @@ class RegistrationTest(unittest.TestCase):
         ("PreToolUse", "Bash"): "pre-tool-use",
         ("PreToolUse", "EnterWorktree|Agent|Task"): "pre-tool-use",
         ("PreToolUse", "Write|Edit|MultiEdit|NotebookEdit"): "pre-tool-use-write",
-        ("PostToolUse", "Agent|Task|EnterWorktree|ExitWorktree"): "post-tool-use",
+        ("PostToolUse", "Agent|Task|EnterWorktree|ExitWorktree|Skill"): "post-tool-use",
         ("PostToolUse", "Bash"): "post-tool-use-bash",
         ("PostToolUseFailure", "Bash"): "post-tool-use-failure",
         ("SessionStart", None): "session-start",
@@ -56,7 +56,7 @@ class RegistrationTest(unittest.TestCase):
             ("Write|Edit|MultiEdit|NotebookEdit", None),
         ])
         self.assertEqual([g["matcher"] for g in self.plugin["PostToolUse"]],
-                         ["Agent|Task|EnterWorktree|ExitWorktree", "Bash"])
+                         ["Agent|Task|EnterWorktree|ExitWorktree|Skill", "Bash"])
         self.assertEqual([g["matcher"] for g in self.plugin["PostToolUseFailure"]], ["Bash"])
         # no matcher: every start (startup, resume, clear, compact) restates the role
         self.assertEqual([g.get("matcher") for g in self.plugin["SessionStart"]], [None])

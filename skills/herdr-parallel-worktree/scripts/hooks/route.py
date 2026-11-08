@@ -150,6 +150,22 @@ def note_entered(label):
             "a claude that a herdr plugin started in that workspace is a separate, idle session.")
 
 
+DISPATCH_SKILLS = ("superpowers:subagent-driven-development", "superpowers:dispatching-parallel-agents")
+
+
+def note_dispatch_skill(skill):
+    return (f"Inside herdr, {skill} hands each task to an agent; here each of those agents runs as a herdr tab the "
+            f"user can watch. Before the first dispatch, read {GUIDE}.")
+
+
+def dispatch_skills(cfg):
+    """The skills that dispatch tasks: `dispatchSkills` from the config when it is a list of strings, else the default."""
+    names = cfg.get("dispatchSkills") if isinstance(cfg, dict) else None
+    if isinstance(names, list) and all(isinstance(n, str) for n in names):
+        return tuple(names)
+    return DISPATCH_SKILLS
+
+
 NOTE_HANDOFF = (
     f"If this subagent returns a HERDR-HANDOFF block, load the {SKILL} skill and handle it by the block's "
     "`owner:` line (step 0, Receiving a handoff). Do not tell the user to run anything with `!` or to turn "
@@ -486,7 +502,7 @@ def repo_of(own, runs, writer_main):
 
 
 def decide(event, env, probe=git_probe, runs=None, main_of=owners.main_checkout_of, deps=None, herdr=None,
-           refs=None, store=None, save=None):
+           refs=None, store=None, save=None, cfg=None):
     hook, tool = event.get("hook_event_name"), event.get("tool_name")
     args = event.get("tool_input") or {}
     who = actor(event, env)
@@ -507,6 +523,12 @@ def decide(event, env, probe=git_probe, runs=None, main_of=owners.main_checkout_
     if hook == "PostToolUse":
         if tool in ("Agent", "Task") and who == "main":
             return {"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": NOTE_HANDOFF}}
+        if tool == "Skill" and who == "main":
+            skill = args.get("skill")
+            if isinstance(skill, str) and skill in dispatch_skills(read_config(env) if cfg is None else cfg):
+                return {"hookSpecificOutput": {"hookEventName": "PostToolUse",
+                                               "additionalContext": note_dispatch_skill(skill)}}
+            return None
         if tool in ("EnterWorktree", "ExitWorktree") and who == "main":
             label = register(event, env, probe, runs, main_of, herdr or run_herdr)
             if label:
@@ -550,15 +572,21 @@ def decide(event, env, probe=git_probe, runs=None, main_of=owners.main_checkout_
     return None
 
 
+def read_config(env):
+    """DATA_DIR/config.json as a dict; {} when it is missing, unreadable or not an object."""
+    base = env.get("HERDR_SKILLS_DATA_HOME") or os.path.expanduser("~/.local/share/herdr-skills")
+    try:
+        with open(os.path.join(base, SKILL, "config.json"), encoding="utf-8") as f:
+            cfg = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    return cfg if isinstance(cfg, dict) else {}
+
+
 def enabled():
     if os.environ.get("HERDR_ENV") != "1":
         return False
-    base = os.environ.get("HERDR_SKILLS_DATA_HOME") or os.path.expanduser("~/.local/share/herdr-skills")
-    try:
-        with open(os.path.join(base, SKILL, "config.json"), encoding="utf-8") as f:
-            return json.load(f).get("hooks", "on") != "off"
-    except (OSError, ValueError, AttributeError):
-        return True   # no or unreadable config: the default is on
+    return read_config(os.environ).get("hooks", "on") != "off"   # no or unreadable config: the default is on
 
 
 def main():

@@ -29,6 +29,17 @@
       ],
       "default": "on",
       "description": "Whether the routing hooks act. Absent means on. See SKILL.md Hooks."
+    },
+    "dispatchSkills": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [
+        "superpowers:subagent-driven-development",
+        "superpowers:dispatching-parallel-agents"
+      ],
+      "description": "Skills that hand each task to an agent; loading one points the main session to the dispatch guide."
     }
   },
   "additionalProperties": false
