@@ -75,12 +75,12 @@ worktree 없는 세션은 worktree를 만들지 않을 뿐 같은 규칙으로 �
 
 ### `finalize-brief.py`
 
-`--workdir PATH`: worktree 없는 세션의 Environment 줄(`- Working directory: …`)을 쓴다. 닫는 문단도 바꾼다. "이 브랜치에 커밋하라" 대신 "커밋하지 마라"이고, 마지막 문장 "Do not push or open a pull request."는 그대로 둔다. 3단계의 `wait-output`이 그 문장을 기다리기 때문이다. 다시 돌려도 Environment 줄로 알아보고 같은 문단을 쓴다.
+`--workdir PATH`: worktree 없는 세션의 Environment 줄(`- Working directory: …`)을 쓴다. 닫는 문단도 바꾼다. "이 브랜치에 커밋하라" 대신 "커밋하지 말고, git이 추적하는 파일은 바꾸지 마라"이고, 마지막 문장 "Do not push or open a pull request."는 그대로 둔다. 3단계의 `wait-output`이 그 문장을 기다리기 때문이다. 다시 돌려도 Environment 줄로 알아보고 같은 문단을 쓴다.
 
 ### `route.py`
 
 - **R8 (EnterWorktree 등록)**: `spaces.repo_space`로 같은 규칙을 쓴다. 1, 2면 그 스페이스에 `worktree open --workspace`. 3이면 등록하지 않는다. 이 세션은 이미 자기 탭에 있고, 새 최상위 스페이스를 만들지 않는다. 지금까지는 `--cwd`로 열어 P6처럼 새 스페이스가 생길 수 있었다.
-- **워커 역할 문단**: "Do not write where another session works (… the main checkout …)"는 worktree 없이 어떤 레포의 원본 체크아웃 안에서 일하는 워커와 어긋난다. "the main checkout"을 "a main checkout you were not started in"으로 바꾼다. 훅의 판정(자기 home 안은 허용)은 이미 그렇게 동작한다.
+- **워커 역할 문단**: "Do not write where another session works (… the main checkout …)"는 worktree 없이 어떤 레포의 원본 체크아웃 안(git이 무시하는 작업 폴더)에서 일하는 워커와 어긋난다. "the main checkout"을 "a main checkout outside the working directory your brief gives you"로 바꾼다. 훅의 판정(자기 home 안은 허용)은 이미 그렇게 동작한다.
 
 ### 스킬 문서 (drift 없이)
 
@@ -119,6 +119,9 @@ drift를 막는 장치:
 - 링크된 worktree 스페이스만 있고 원본 스페이스가 없는 레포(kurly-fulfillment-auth)는 "스페이스 없음"으로 본다. 붙을 "밑"이 없다.
 - EnterWorktree 등록(R8)도 같은 규칙으로 바꾼다. 같은 불만(새 최상위 스페이스)이 같은 원인에서 나오고, 규칙이 둘이면 문서가 어긋난다.
 - 버전은 0.9.0으로 올린다(사이드바에 보이는 동작이 바뀐다).
+- **worktree 없는 워커를 언제 쓰나** (빌더 검토 질문 1): 저장소의 코딩 작업에는 늘 worktree가 있다. worktree 없는 워커는 worktree가 있으면 안 되거나 필요 없는 일에만 쓴다. 사용자나 저장소 규칙이 worktree·브랜치를 막는 경우, 또는 어떤 저장소도 바꾸지 않는 일(평가, 작업 폴더에 결과를 쓰는 조사·리뷰)이다. `ROLE_MAIN`과 스킬 설명(frontmatter)은 그대로 둔다. 모든 세션이 그 문장의 비용을 내므로, 예외는 SKILL.md 본문에만 둔다.
+- **같은 체크아웃을 여러 세션이 고칠 수 있나** (질문 2): 아니다. worktree 없는 워커는 git이 추적하는 파일을 바꾸지 않고 커밋하지 않는다. 쓰기는 자기 작업 디렉터리(git 밖이거나 git이 무시하는 곳)에서만 한다. 이 규칙은 SKILL.md 절, `--workdir` 닫는 문단, 워커 역할 문단에 적는다. 훅 강제는 더하지 않는다(자연스러움과 절약).
+- **후속 전달** (질문 3): 기록이 없으니 이름으로 찾는다(`herdr agent get <name>`). 후속 파일도 `--workdir`로 마무리한다. 이름은 기록되었거나 떠 있는 워커와 겹치면 안 된다. 훅이 브리프에서 바깥 경로를 이름으로 읽기 때문이다.
 - 다른 세션이 이 스킬을 지금 쓰고 있다(설치본이 main 체크아웃을 가리킴). 그래서 브랜치에서 구현·검증만 하고, main 머지는 사용자에게 맡긴다.
 
 ## 7. 검증

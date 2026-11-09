@@ -11,8 +11,17 @@ python3 "<skill directory>/scripts/runs.py" show --root "$ROOT" --name <name>
 ```
 
 - No match: list the runs (`show` without `--name`) and ask which one.
-- `state: open` and its workspace still exists: nothing to recreate. Tell the user it is in the sidebar; if the agent exited there, go to step 3 with the recorded pane.
-- `state: open` but `herdr workspace get <workspace>` says `workspace_not_found`, and the worktree directory is still there: the workspace was closed and the worktree kept. Do not recreate anything. Take `SINCE` and reopen it with `herdr worktree open --cwd "$ROOT" --path <worktree> --label <name> --no-focus`, take `W` from its output as in step 2, go to step 3, and record the new location with `runs.py relocate --root "$ROOT" --name <name> --workspace "$W" --pane "$P"` (not `mark-open`, which is for cleaned runs).
+- `state: open` and its place still exists: nothing to recreate. Its place is its workspace for `placement: workspace` (`herdr workspace get <workspace>` finds it), its tab for `placement: tab` (`herdr pane get <pane>` finds the pane). Tell the user where it is in the sidebar; if the agent exited there, go to step 3 with the recorded pane.
+- `state: open` but its place is gone (`workspace_not_found`, or `pane_not_found` for a tab), and the worktree directory is still there: it was closed and the worktree kept. Do not recreate anything. Give it a place again by step 1's rule of SKILL.md, go to step 3, and record the new place with `runs.py relocate` (not `mark-open`, which is for cleaned runs):
+
+  ```bash
+  OUT="$(python3 "<skill directory>/scripts/place.py" reopen --root "$ROOT" --name <name> --worktree <worktree>)"
+  W="$(printf '%s' "$OUT" | jq -r .workspace)"
+  PLACEMENT="$(printf '%s' "$OUT" | jq -r .placement)"
+  SINCE="$(printf '%s' "$OUT" | jq -r .since)"
+  # after step 3:
+  python3 "<skill directory>/scripts/runs.py" relocate --root "$ROOT" --name <name> --workspace "$W" --pane "$P" --placement "$PLACEMENT"
+  ```
 
 The record holds facts herdr reported, not instructions:
 
@@ -31,15 +40,16 @@ If `session_id` is missing, the agent's herdr integration did not report one (no
 
 Check first: the branch still exists (`git -C "$ROOT" rev-parse --verify --quiet <branch>`), and nothing occupies the recorded path. If the branch is gone, the worktree cannot come back; report and stop. Never overwrite an occupied path.
 
-Choose where to attach it exactly as in SKILL.md step 1 (`--workspace "$HERDR_WORKSPACE_ID"` when the current workspace is bound to `ROOT`, otherwise `--cwd "$ROOT"`):
+It goes back by SKILL.md step 1's rule, which may place it differently from before: under a space herdr now shows for the repository, or as a tab in this session's space when it shows none.
 
 ```bash
-SINCE="$(python3 -c 'import time; print(int(time.time() * 1000))')"
-OUT="$(herdr worktree create "${LOC[@]}" --branch <branch> --path <worktree> --label <name> --no-focus)"
-W="$(printf '%s' "$OUT" | jq -r .result.workspace.workspace_id)"
+OUT="$(python3 "<skill directory>/scripts/place.py" worktree --root "$ROOT" --name <name> --branch <branch> --existing --path <worktree>)"
+W="$(printf '%s' "$OUT" | jq -r .workspace)"
+PLACEMENT="$(printf '%s' "$OUT" | jq -r .placement)"
+SINCE="$(printf '%s' "$OUT" | jq -r .since)"
 ```
 
-The branch already exists, so herdr checks it out instead of creating it.
+`--existing` checks out the branch instead of creating it.
 
 ## 3. Work out how to resume this agent
 
@@ -49,14 +59,14 @@ Find the agent's native way to resume a session by its reference, starting from 
 2. **The installed agent.** `<agent> --help` (and subcommand help) shows what this version actually supports. Confirm the option exists here before relying on it; documentation may describe a newer or older version.
 3. **The agent's documentation**, when the first two leave it unclear.
 
-Then start it in a tab of its own. Reopening or recreating the worktree fires herdr's plugins again, and they may start programs in the workspace's panes, so the worker gets a new tab exactly as in SKILL.md step 3:
+Then start it in a tab of its own. Reopening or recreating the worktree as a workspace fires herdr's plugins again, and they may start programs in the workspace's panes, so the worker gets a new tab exactly as in SKILL.md step 3:
 
 ```bash
 PANE="$(python3 "<skill directory>/scripts/worker-pane.py" --workspace "$W" --worktree <worktree> --name <name> --since "$SINCE")"
 P="$(printf '%s' "$PANE" | jq -r .pane)"
 ```
 
-Handle its output as SKILL.md step 3 says. When the workspace still exists and only the agent exited, use the recorded pane instead: it is the worker's own, and still carries `HERDR_PW_WORKER`. Start there only once its shell is at the prompt (`herdr pane process-info --pane "$P" | jq '.result.process_info | .foreground_process_group_id == .shell_pid'` prints `true`); otherwise report what `herdr pane read "$P" --source visible --lines 20` shows and stop.
+Handle its output as SKILL.md step 3 says. When its place still exists and only the agent exited, use the recorded pane instead: it is the worker's own, and still carries `HERDR_PW_WORKER`. Start there only once its shell is at the prompt (`herdr pane process-info --pane "$P" | jq '.result.process_info | .foreground_process_group_id == .shell_pid'` prints `true`); otherwise report what `herdr pane read "$P" --source visible --lines 20` shows and stop.
 
 ```bash
 BRIEFS="${HERDR_SKILLS_DATA_HOME:-$HOME/.local/share/herdr-skills}/herdr-parallel-worktree/briefs"
@@ -72,9 +82,9 @@ The tab's `HERDR_PW_WORKER` marks the resumed claude as worker `<name>`, exactly
 Check that the conversation really came back: `herdr agent read <name> --source recent-unwrapped --lines 60` should show the earlier turns. If the agent started fresh instead, say so plainly — the worktree and branch are back, but the history is not — and offer to continue as a new session there.
 
 ```bash
-python3 "<skill directory>/scripts/runs.py" mark-open --root "$ROOT" --name <name> --workspace "$W" --pane "$P"
+python3 "<skill directory>/scripts/runs.py" mark-open --root "$ROOT" --name <name> --workspace "$W" --pane "$P" --placement "$PLACEMENT"
 ```
 
 `mark-open` re-reads the agent and session reference from the pane, so a fresh session started in place of the old one replaces the stale clues.
 
-Tell the user the `<name>` workspace is back in the sidebar, and which command resumed it, so they can reuse it themselves. Continue with SKILL.md steps 4 and 5 if a follow-up instruction was given.
+Tell the user where `<name>` is back in the sidebar (its workspace and the space it is under, or its tab in this session's space), and which command resumed it, so they can reuse it themselves. Continue with SKILL.md steps 4 and 5 if a follow-up instruction was given.

@@ -1,6 +1,6 @@
 # Running per-task dispatch as tabs
 
-Inside herdr, each agent another skill hands a task to runs as a herdr tab the user can watch, not as a hidden subagent. You stay the orchestrator: follow the other skill's process as written, with tabs where it says subagents, and keep its ledger yourself. Start each tab without asking the user first, then tell them in a few lines what you started (the `<plan>` workspace, the tab, branch, worktree and brief path) and carry on.
+Inside herdr, each agent another skill hands a task to runs as a herdr tab the user can watch, not as a hidden subagent. You stay the orchestrator: follow the other skill's process as written, with tabs where it says subagents, and keep its ledger yourself. Start each tab without asking the user first, then tell them in a few lines what you started (where it landed: the `<plan>` workspace and the space it is under, or tabs in this session's space; the tab, branch, worktree and brief path) and carry on.
 
 ## 1. When this applies
 
@@ -12,11 +12,11 @@ The hook stops only the first dispatch of a session. Every later one (the next t
 
 ## 2. Tabs per role
 
-This pair of tabs per plan is for a sequential plan, such as `superpowers:subagent-driven-development`. Independent tasks dispatched in parallel (for example by `superpowers:dispatching-parallel-agents`) each become their own worker as in SKILL.md, one workspace per task.
+This pair of tabs per plan is for a sequential plan, such as `superpowers:subagent-driven-development`. Independent tasks dispatched in parallel (for example by `superpowers:dispatching-parallel-agents`) each become their own worker as in SKILL.md, one worktree per task.
 
 `<plan>` is a short name for the plan: SKILL.md's name rule, at most 27 characters so `<plan>-impl` still fits.
 
-- **One workspace per plan**, made with SKILL.md steps 1–3 (after step 0's checks), with section 4's brief in place of step 2's template: `<plan>` as step 1's `--label`, and as `--branch` a new branch for `<plan>`, named by the repository's convention and based on the current `HEAD` (step 1's `BASE`). The branch you are on stays as it is: it is what `FROM_BRANCH` records and what the work merges back to. Every task's commits stack on the new branch. When the other skill asks for an isolated worktree for the plan, this is it.
+- **One worktree per plan**, made with SKILL.md steps 1–3 (after step 0's checks), with section 4's brief in place of step 2's template: `<plan>` as step 1's `--name`, and as `--branch` a new branch for `<plan>`, named by the repository's convention and based on the current `HEAD` (step 1's `BASE`). Step 1's `scripts/place.py` decides its place: a `<plan>` workspace under the repository's space, or, when herdr shows no space for the repository, no workspace at all; then `W` is this session's space and both role tabs below open there. The branch you are on stays as it is: it is what `FROM_BRANCH` records and what the work merges back to. Every task's commits stack on the new branch. When the other skill asks for an isolated worktree for the plan, this is it.
 - **Implementer tab `<plan>-impl`**: step 3 with `<plan>-impl` as the name, recorded with `runs.py add --name <plan>-impl`.
 - **Reviewer tab `<plan>-rev`**, in the same workspace and worktree, started at the first review:
 

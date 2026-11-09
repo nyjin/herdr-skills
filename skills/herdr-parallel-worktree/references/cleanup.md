@@ -1,8 +1,8 @@
 # Cleaning up finished workers
 
-Every run leaves a worktree and a workspace behind, and they pile up. This document covers when a worker may be cleaned up, how to confirm with the user, and how to report so that every cleaned session can be resumed later (`references/resume.md`).
+Every run leaves a worktree behind, with its workspace or, for a worker placed as a tab (SKILL.md step 1), its tab, and they pile up. This document covers when a worker may be cleaned up, how to confirm with the user, and how to report so that every cleaned session can be resumed later (`references/resume.md`).
 
-Cleaning up removes the worktree and closes its workspace. The branch, the brief and the agent's own session history all stay, which is what makes resuming possible.
+Cleaning up removes the worktree and closes its workspace, or a tab worker's own tab, never the space that tab is in. The branch, the brief and the agent's own session history all stay, which is what makes resuming possible.
 
 ## When
 
@@ -24,7 +24,7 @@ A run is a **candidate** only when all of these hold:
 | Condition | Why |
 |---|---|
 | Worker is not `working` or `blocked` | never cut off a worker mid-task or while it waits for the user |
-| User is not viewing the workspace (`focused` is false) | the screen they are reading should not vanish |
+| User is not viewing its workspace, or its tab for a tab worker (`focused` is false) | the screen they are reading should not vanish |
 | No uncommitted changes in the worktree | removing it would lose them; herdr refuses anyway without `--force` |
 | The result is safe elsewhere: no commits at all, merged into the branch it was created from, or pushed with nothing unpushed | the branch survives removal, but unmerged and unpushed work is most likely still under review |
 
@@ -49,7 +49,7 @@ Run the entry's `remove_command`, then mark it:
 python3 "<skill directory>/scripts/runs.py" mark-cleaned --root "$ROOT" --name <name> --agent <agent from scan> --session-id <session_id from scan>
 ```
 
-`remove_command` is `herdr worktree remove --workspace <id>` while the workspace is open. If the user already closed the workspace, the worktree has no workspace to remove it with, so it is `git -C <root> worktree remove <path>`. Both refuse to delete uncommitted changes.
+`remove_command` is `herdr worktree remove --workspace <id>` while the workspace is open. If the user already closed the workspace, the worktree has no workspace to remove it with, so it is `git -C <root> worktree remove <path>`. For a tab worker (`placement: tab`) it is `git -C <root> worktree remove <path> && herdr tab close <tab>`: herdr never opened that worktree, and only the worker's own tab closes, after the worktree is gone (just the first part once the tab is already closed). All of them refuse to delete uncommitted changes.
 
 Remove first, then mark. If the removal fails (for example, a change appeared since the scan), do not retry with `--force`; report it and leave the run open. For `stale` runs, only run `mark-cleaned`: the branch still exists, so they can be resumed like any cleaned run. The scan re-reads the agent and session reference from the pane just before removal, so the record holds the latest ones.
 
@@ -61,11 +61,11 @@ Report every cleaned run with the clues needed to bring it back, in a table:
 |---|---|---|---|---|---|
 | `proj-101` | `feature/PROJ-101` | merged into main | `claude` | `40e7b47d-…` | ask "resume proj-101" |
 
-Below the table, say how to do it by hand as well: recreate the worktree at the recorded path, then start the agent with its native resume option.
+Below the table, say how to do it by hand as well: recreate the worktree at the recorded path, open a tab there, then start the agent with its native resume option. Asking "resume <name>" does the same and also puts the worker back under its repository's space.
 
 ```bash
-herdr worktree create --cwd <root> --branch <branch> --path <worktree> --label <name>
-<the agent's resume command for this session id>   # in the new workspace pane
+git -C <root> worktree add <worktree> <branch>
+<the agent's resume command for this session id>   # in a tab whose cwd is <worktree>
 ```
 
 Work out that resume command the same way `references/resume.md` step 3 does (herdr's session-state docs, then the installed agent's `--help`), and write the concrete command into the report rather than a placeholder. If there is no session ID, say that the worktree can be recreated from the branch but the conversation may not be restorable.

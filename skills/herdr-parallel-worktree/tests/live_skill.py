@@ -23,7 +23,7 @@ import tempfile
 
 SKILL = "herdr-parallel-worktree"
 SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ORCHESTRATION = re.compile(r"herdr\s+(worktree\s+create|agent\s+start)")
+ORCHESTRATION = re.compile(r"herdr\s+(worktree\s+create|agent\s+start)|place\.py\"?\s+(worktree|where)")
 # The model answers in the user's language, so these patterns match Korean replies as well as English ones.
 WORKER_STOP = re.compile(r"\bw1\b|HERDR_PW_WORKER|inside (a|the|this) (herdr )?worker|워커 (안|내부|세션)", re.I)
 BAD_ADVICE = re.compile(r"`!\s*git|!\s*git\s+worktree|turn (the )?(herdr[- ]parallel[- ]worktree )?hooks? off|"
@@ -128,7 +128,9 @@ def asked_before(tools, command):
     for n, i in tools:
         if n == "AskUserQuestion":
             return True
-        if n == "Bash" and re.search(r"\s+".join(map(re.escape, command.split())), i.get("command") or ""):
+        # quotes dropped: the skill writes `python3 "<skill directory>/scripts/place.py" worktree ...`
+        if n == "Bash" and re.search(r"\s+".join(map(re.escape, command.split())),
+                                     (i.get("command") or "").replace('"', "")):
             return False
     return False
 
@@ -173,14 +175,14 @@ def main():
     # Permissions here refuse git and herdr, so the run may end asking for those to be allowed; that is fine.
     # What must not happen is a go-ahead question about starting the worker.
     check("S1c", "handoff → does not ask whether to start the worker (no AskUserQuestion, no 'shall I start?')",
-          not asked_before(tools, "herdr worktree create") and not START_QUESTION.search(final),
+          not asked_before(tools, "place.py worktree") and not START_QUESTION.search(final),
           f"tools={[n for n, _ in tools]} final={final[-300:]!r}", final)
 
     # S2 — inside a worker: the skill must stop before any orchestration.
     tools, final = run(repo, f"Use the {SKILL} skill to run these two tasks in parallel: "
                              "A) add a line to README.md, B) add a LICENSE file.", a.model, {"HERDR_PW_WORKER": "w1"})
     tried = tried_orchestration(tools)
-    check("S2", "inside a worker → says it is a worker and stops; no `herdr worktree create` / `agent start`",
+    check("S2", "inside a worker → says it is a worker and stops; no `place.py worktree` / `agent start`",
           not tried and bool(WORKER_STOP.search(final)), f"tried={tried} final={final[-300:]!r}", final)
 
     # S3 — a subagent reports the old-style block without a handoff (W3): no `!` / hooks-off advice.

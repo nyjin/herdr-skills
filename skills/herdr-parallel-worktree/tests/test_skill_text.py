@@ -13,11 +13,33 @@ SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SKILL_MD = os.path.join(SKILL_DIR, "SKILL.md")
 SCHEMA = os.path.join(SKILL_DIR, "references", "config.schema.json")
 BRIEF_FILLING = os.path.join(SKILL_DIR, "references", "brief-filling.md")
+REFS = os.path.join(SKILL_DIR, "references")
+RESUME = os.path.join(REFS, "resume.md")
+DELIVER = os.path.join(REFS, "deliver.md")
+PLACE = os.path.join(SKILL_DIR, "scripts", "place.py")
+OPTION = re.compile(r"(?<![\w-])--[a-z][a-z-]*")
+# `place.py <sub> <args>` up to the end of that command: a closing `)`, a pipe, `;`, `&&` or the end of the line
+PLACE_CALL = re.compile(r'place\.py"?\s+([a-z]+)\b([^\n`)|;&]*)')
 
 
 def read(path):
     with open(path, encoding="utf-8") as f:
         return f.read()
+
+
+def doc_paths():
+    yield SKILL_MD
+    for f in sorted(os.listdir(REFS)):
+        if f.endswith(".md"):
+            yield os.path.join(REFS, f)
+
+
+def help_text(script, sub):
+    import subprocess
+    import sys
+    r = subprocess.run([sys.executable, script, sub, "--help"], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    return r.stdout
 
 
 def section(text, heading):
@@ -49,6 +71,40 @@ class SkillTextTest(unittest.TestCase):
         for word in ("`Skill`", "UserPromptSubmit"):
             with self.subTest(word=word):
                 self.assertTrue(word in hooks, f"the Hooks section does not name {word}")
+
+    def test_docs_place_workers_with_place_py(self):
+        for path in (SKILL_MD, *(os.path.join(REFS, f) for f in ("resume.md", "deliver.md", "dispatch.md"))):
+            with self.subTest(doc=os.path.basename(path)):
+                self.assertIn("scripts/place.py", read(path))
+
+    def test_no_doc_lets_herdr_make_a_space(self):
+        # `--cwd` lets herdr make a new top-level space for the repository; place.py decides the space instead
+        for path in doc_paths():
+            text = read(path)
+            for bad in ("worktree create --cwd", "worktree open --cwd", "LOC=("):
+                with self.subTest(doc=os.path.basename(path), text=bad):
+                    self.assertNotIn(bad, text)
+
+    def test_place_py_calls_in_docs_exist(self):
+        subs = {"where", "worktree", "reopen"}
+        offered = {s: set(OPTION.findall(help_text(PLACE, s))) for s in subs}
+        used = 0
+        for path in doc_paths():
+            for sub, rest in PLACE_CALL.findall(read(path)):
+                used += 1
+                with self.subTest(doc=os.path.basename(path), call=f"place.py {sub}{rest}"):
+                    self.assertIn(sub, subs)
+                    self.assertEqual(set(OPTION.findall(rest)) - offered[sub], set())
+        self.assertTrue(used, "no place.py call in the docs")
+
+    def test_runs_py_records_placement(self):
+        for path, cmd in ((SKILL_MD, "add"), (RESUME, "mark-open"), (RESUME, "relocate"), (DELIVER, "relocate")):
+            # lines that run the command (they pass --name), not prose that mentions it
+            lines = [l for l in read(path).splitlines() if re.search(r'runs\.py"? ' + cmd + r"\b.*--name", l)]
+            with self.subTest(doc=os.path.basename(path), cmd=cmd):
+                self.assertTrue(lines, f"no runs.py {cmd} line")
+                for line in lines:
+                    self.assertIn("--placement", line)
 
     def test_finalize_options_documented(self):
         text = read(BRIEF_FILLING)

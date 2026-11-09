@@ -10,7 +10,7 @@ Deliver without asking first, like starting a worker (SKILL.md step 0): the hand
 python3 "<skill directory>/scripts/runs.py" show --root "$ROOT" --name <name>
 ```
 
-`ROOT` is the repository the worker belongs to (its record's `root`; for a handoff, the block's `repo:`). No record: tell the user that `<name>` is not a worker this skill started, and handle the block as `owner: none` only if they agree.
+`ROOT` is the repository the worker belongs to (its record's `root`; for a handoff, the block's `repo:`). No record: if `herdr agent get <name>` finds a worker without a worktree that this skill started (SKILL.md, "A worker without a worktree"), it has none by design: skip step 3, and finalize the follow-up with `--workdir` in step 2. Otherwise tell the user that `<name>` is not a worker this skill started, and handle the block as `owner: none` only if they agree.
 
 ## 2. Write the follow-up
 
@@ -21,7 +21,7 @@ BRIEFS="${HERDR_SKILLS_DATA_HOME:-$HOME/.local/share/herdr-skills}/herdr-paralle
 FOLLOWUP="$BRIEFS/<name>-followup-$(date +%Y%m%d-%H%M%S).md"
 ```
 
-Write `$FOLLOWUP` with the Write tool: the block's `goal`, its `steps`, and its `done:` (what was already changed, and where, so the worker does not redo or fight it). Then finalize it like a brief: `python3 "<skill directory>/scripts/finalize-brief.py" "$FOLLOWUP"`. Workers started by this skill can read `BRIEFS` (`--add-dir`).
+Write `$FOLLOWUP` with the Write tool: the block's `goal`, its `steps`, and its `done:` (what was already changed, and where, so the worker does not redo or fight it). Then finalize it like a brief: `python3 "<skill directory>/scripts/finalize-brief.py" "$FOLLOWUP"`, adding `--workdir "<its directory>"` for a worker without a worktree. Workers started by this skill can read `BRIEFS` (`--add-dir`).
 
 ## 3. Make sure a claude is running there
 
@@ -30,22 +30,23 @@ Check the record against herdr, in this order:
 | What you find | What to do |
 |---|---|
 | `state: open`, `herdr agent get <name>` shows the agent | Running. Go to step 4. |
-| `state: open`, the workspace exists (`herdr workspace get <workspace>`), but no agent in the pane | The session ended. Resume it in that pane: `references/resume.md` step 3, with the recorded `pane`. |
-| `state: open`, `herdr workspace get <workspace>` says `workspace_not_found`, and the worktree directory still exists | The workspace was closed and the worktree kept. Reopen it, resume, and record where it is now (below). |
+| `state: open`, its place exists (its workspace, or for `placement: tab` its pane: `references/resume.md` step 1), but no agent in the pane | The session ended. Resume it in that pane: `references/resume.md` step 3, with the recorded `pane`. |
+| `state: open`, its place is gone (`workspace_not_found`, or `pane_not_found` for a tab), and the worktree directory still exists | It was closed and the worktree kept. Give it a place again, resume, and record where it is now (below). |
 | `state: cleaned`, or the worktree directory is gone | Follow `references/resume.md` from step 1; it recreates the worktree and records the run as open again. |
 
-Reopening a closed workspace whose worktree is still there:
+Giving a closed worker whose worktree is still there its place again, by SKILL.md step 1's rule:
 
 ```bash
-SINCE="$(python3 -c 'import time; print(int(time.time() * 1000))')"
-OUT="$(herdr worktree open --cwd "$ROOT" --path <worktree> --label <name> --no-focus)"
-W="$(printf '%s' "$OUT" | jq -r .result.workspace.workspace_id)"
+OUT="$(python3 "<skill directory>/scripts/place.py" reopen --root "$ROOT" --name <name> --worktree <worktree>)"
+W="$(printf '%s' "$OUT" | jq -r .workspace)"
+PLACEMENT="$(printf '%s' "$OUT" | jq -r .placement)"
+SINCE="$(printf '%s' "$OUT" | jq -r .since)"
 ```
 
-Then resume with `references/resume.md` step 3, which gives the worker a tab of its own (`P`), and record the new location:
+Then resume with `references/resume.md` step 3, which gives the worker a tab of its own (`P`), and record the new place:
 
 ```bash
-python3 "<skill directory>/scripts/runs.py" relocate --root "$ROOT" --name <name> --workspace "$W" --pane "$P"
+python3 "<skill directory>/scripts/runs.py" relocate --root "$ROOT" --name <name> --workspace "$W" --pane "$P" --placement "$PLACEMENT"
 ```
 
 A resumed worker keeps its conversation: in testing it remembered what it had done before and followed the follow-up.
