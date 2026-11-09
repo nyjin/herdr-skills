@@ -2,15 +2,17 @@
 """A stand-in for the herdr CLI in live tests, so a real `claude -p` run never touches the user's herdr.
 
 Records every call and answers the commands the hooks make, in the shapes herdr 0.9.0 prints:
-`workspace get`, `workspace list`, `worktree open` (idempotent, like herdr's `already_open`) and
-`workspace close`. It also plays through the skill's worker start (`worktree create` makes a real git worktree,
+`workspace get`, `workspace list`, `worktree list` (the space herdr knows for the repository),
+`worktree open` (idempotent, like herdr's `already_open`) and `workspace close`. It also plays through the skill's
+worker start (`worktree create` makes a real git worktree,
 `plugin log list` (no plugins), `tab create`, `pane process-info`, `pane run`, `agent start`, `agent wait`,
 `agent read`, ...) without running any agent. Anything else is recorded
 and fails, which is enough to see that it was attempted.
 
   FAKE_HERDR_DIR       directory for calls.jsonl (one JSON array of arguments per call) and state.json
-  FAKE_HERDR_REPO_KEY  the repo_key `workspace get` reports for any workspace
-  FAKE_HERDR_REPO      the repository `worktree create` uses when called without --cwd
+  FAKE_HERDR_REPO_KEY  the repo_key `workspace get` reports for any workspace, and `worktree list` for the repository
+  FAKE_HERDR_SOURCE_WS the space `worktree list` says herdr knows for the repository (unset: none)
+  FAKE_HERDR_REPO      the repository `worktree create` uses when called without --cwd (e.g. with --workspace)
 
 Install it as `herdr` on PATH with fake_herdr.install(bin_dir).
 """
@@ -63,6 +65,14 @@ def main():
     if args[:2] == ["workspace", "get"] and len(args) > 2:
         reply({"result": {"workspace": {"workspace_id": args[2],
                                         "worktree": {"repo_key": os.environ.get("FAKE_HERDR_REPO_KEY", "")}}}})
+    if args[:2] == ["worktree", "list"]:
+        key = os.environ.get("FAKE_HERDR_REPO_KEY", "")
+        src = {"repo_key": key, "repo_name": os.path.basename(os.path.dirname(key)), "repo_root": opt("--cwd")}
+        if os.environ.get("FAKE_HERDR_SOURCE_WS"):
+            src["source_workspace_id"] = os.environ["FAKE_HERDR_SOURCE_WS"]
+        reply({"result": {"source": src, "worktrees": []}})
+    if args[:2] == ["tab", "get"] and len(args) > 2:
+        reply({"result": {"tab": {"tab_id": args[2], "agent_status": "idle", "focused": False}}})
     if args[:2] == ["workspace", "list"]:
         reply({"result": {"workspaces": state["workspaces"]}})
     if args[:2] == ["worktree", "open"]:

@@ -402,11 +402,16 @@ class PostToolUseTest(unittest.TestCase):
 class FakeHerdr:
     """Records herdr calls and answers like the herdr CLI does (shapes taken from herdr 0.9.0)."""
 
-    def __init__(self, repo_key="/r/.git", workspaces=()):
-        self.calls, self.repo_key, self.workspaces = [], repo_key, list(workspaces)
+    def __init__(self, repo_key="/r/.git", workspaces=(), source=None):
+        self.calls, self.repo_key, self.workspaces, self.source = [], repo_key, list(workspaces), source
 
     def __call__(self, args):
         self.calls.append(list(args))
+        if args[:2] == ["worktree", "list"]:            # the repository /r, and the space herdr knows for it
+            src = {"repo_key": "/r/.git", "repo_name": "r", "repo_root": "/r"}
+            if self.source:
+                src["source_workspace_id"] = self.source
+            return {"result": {"source": src, "worktrees": []}}
         if args[:2] == ["workspace", "get"]:
             return {"result": {"workspace": {"workspace_id": args[2], "worktree": {"repo_key": self.repo_key}}}}
         if args[:2] == ["workspace", "list"]:
@@ -452,15 +457,34 @@ class RegisterTest(unittest.TestCase):
         self.assertEqual(calls[-1], ["worktree", "open", "--workspace", "w1", "--path", BETA, "--label", "beta",
                                      "--no-focus"])
 
-    def test_enter_uses_the_repository_when_the_workspace_belongs_to_another(self):
-        # --workspace would make herdr look for the worktree in the other repository (skill step 1)
-        _, calls = self.enter({"worktreePath": BETA}, herdr=FakeHerdr(repo_key="/other/.git"))
-        self.assertEqual(calls[-1][:4], ["worktree", "open", "--cwd", "/r"])
+    def test_enter_goes_under_the_space_herdr_knows(self):
+        # the session's workspace belongs to another repository: the repository's own space (spaces.repo_space)
+        _, calls = self.enter({"worktreePath": BETA}, herdr=FakeHerdr(repo_key="/other/.git", source="w7"))
+        self.assertEqual(calls[-1], ["worktree", "open", "--workspace", "w7", "--path", BETA, "--label", "beta",
+                                     "--no-focus"])
 
-    def test_enter_without_a_workspace_id_uses_the_repository(self):
-        _, calls = self.enter({"worktreePath": BETA}, env=MAIN_ENV)
-        self.assertEqual(calls, [["worktree", "open", "--cwd", "/r", "--path", BETA, "--label", "beta",
-                                  "--no-focus"]])
+    def test_enter_without_a_workspace_id_uses_the_known_space(self):
+        _, calls = self.enter({"worktreePath": BETA}, env=MAIN_ENV, herdr=FakeHerdr(source="w7"))
+        self.assertEqual(calls[-1], ["worktree", "open", "--workspace", "w7", "--path", BETA, "--label", "beta",
+                                     "--no-focus"])
+
+    def test_enter_opens_nothing_when_no_space_is_known(self):
+        # herdr would make a new top-level space for the repository: the session stays in its own tab instead
+        out, calls = self.enter({"worktreePath": BETA}, herdr=FakeHerdr(repo_key="/other/.git"))
+        self.assertIsNone(out)
+        self.assertEqual([c for c in calls if c[:2] == ["worktree", "open"]], [])
+
+    def test_enter_opens_nothing_when_herdr_fails(self):
+        class Down(FakeHerdr):
+            def __call__(self, args):
+                super().__call__(args)
+                return None
+        out, calls = self.enter({"worktreePath": BETA}, herdr=Down(source="w7"))
+        self.assertIsNone(out)
+        self.assertEqual([c for c in calls if c[:2] == ["worktree", "open"]], [])
+
+    def test_worker_role_allows_its_own_working_directory(self):
+        self.assertIn("a main checkout outside the working directory your brief gives you", route.role_worker("w1"))
 
     def test_enter_says_nothing_when_herdr_did_not_open_it(self):
         class Failing(FakeHerdr):
@@ -566,8 +590,11 @@ class EntryPointTest(unittest.TestCase):
         subprocess.run(git + ["-C", repo, "worktree", "add", "-q", "-b", "worktree-beta", wt], check=True)
         bin_dir, log = os.path.join(self.data, "bin"), os.path.join(self.data, "herdr.log")
         os.makedirs(bin_dir)
-        with open(os.path.join(bin_dir, "herdr"), "w") as f:
-            f.write(f'#!/bin/sh\necho "$*" >> "{log}"\necho \'{{"result":{{"type":"ok"}}}}\'\n')
+        with open(os.path.join(bin_dir, "herdr"), "w") as f:   # herdr knows space w7 for the repository
+            f.write(f'#!/bin/sh\necho "$*" >> "{log}"\n'
+                    'if [ "$1 $2" = "worktree list" ]; then '
+                    'echo \'{"result":{"source":{"repo_key":"x","source_workspace_id":"w7"}}}\'; exit 0; fi\n'
+                    'echo \'{"result":{"type":"ok"}}\'\n')
         os.chmod(os.path.join(bin_dir, "herdr"), 0o755)
         e = event("EnterWorktree", hook="PostToolUse", cwd=wt, name="beta")
         e["tool_response"] = {"worktreePath": wt, "worktreeBranch": "worktree-beta"}
@@ -575,8 +602,9 @@ class EntryPointTest(unittest.TestCase):
                              {"HERDR_ENV": "1", "PATH": bin_dir + os.pathsep + os.environ["PATH"]}, self.data)
         self.assertEqual(_json.loads(out)["hookSpecificOutput"]["additionalContext"], route.note_entered("beta"))
         with open(log) as f:
-            self.assertIn(f"worktree open --cwd {os.path.realpath(repo)} --path {wt} --label beta --no-focus",
-                          f.read())
+            text = f.read()
+        self.assertIn(f"worktree list --cwd {os.path.realpath(repo)}", text)
+        self.assertIn(f"worktree open --workspace w7 --path {wt} --label beta --no-focus", text)
 
     def test_post_tool_use_note(self):
         payload = _json.dumps(event("Agent", hook="PostToolUse", prompt="x"))

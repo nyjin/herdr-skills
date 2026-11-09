@@ -10,7 +10,8 @@ Usage (from a hooks config):
   route.py pre-tool-use-write     PreToolUse Write/Edit/MultiEdit/NotebookEdit: deny a subagent's or worker's write
                                   outside its own worktree, naming the target's owner (R4).
   route.py post-tool-use          PostToolUse in the main session. Agent/Task: how to handle a HERDR-HANDOFF (R6).
-                                  EnterWorktree: open the worktree Claude Code just made in the herdr sidebar;
+                                  EnterWorktree: open the worktree Claude Code just made in the herdr sidebar,
+                                  under its repository's space (spaces.py; none known: nothing is opened);
                                   ExitWorktree that removed it: close that workspace (R8).
   route.py post-tool-use-bash     PostToolUse / PostToolUseFailure Bash: tell a subagent or worker that its command
   route.py post-tool-use-failure  changed a worktree outside its own (R7, observe.py), so it stops and hands it back.
@@ -57,6 +58,7 @@ import time  # noqa: E402
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import observe  # noqa: E402
 import owners  # noqa: E402
+import spaces  # noqa: E402
 
 SKILL = "herdr-parallel-worktree"
 WORKER_VAR = "HERDR_PW_WORKER"
@@ -149,8 +151,9 @@ ROLE_MAIN = (
 def role_worker(name):
     return (f"You are herdr worker `{name}`. Your brief says where you work and what you may touch outside it. "
             "Do not start workers or create worktrees: herdr runs you in a tab, and nested workers break it. "
-            "Do not write where another session works (another worker's worktree, the main checkout, or a "
-            "repository your brief does not list); anything needed there goes back to the orchestrator in your "
+            "Do not write where another session works (another worker's worktree, a main checkout outside the "
+            "working directory your brief gives you, or a repository your brief does not list); anything needed "
+            "there goes back to the orchestrator in your "
             "`## Result`, as a HERDR-HANDOFF block when it is code work. Never send anything to the orchestrator's "
             "pane: it is the user's conversation. A step your brief tells you to take, such as sending a re-review "
             "request to another tab, is yours to take. If your brief asks for something this rules out, say so in "
@@ -374,22 +377,18 @@ def register(event, env, probe, runs, main_of, herdr):
     if not isinstance(path, str) or not path:
         return
     if event.get("tool_name") == "EnterWorktree":
-        found = probe(path)
-        if not found:
+        if not probe(path):
             return
-        loc, ws = None, env.get("HERDR_WORKSPACE_ID")
-        if ws:   # the session's workspace belongs to this repository: attach there (skill step 1)
-            info = (herdr(["workspace", "get", ws]) or {}).get("result") or {}
-            key = ((info.get("workspace") or {}).get("worktree") or {}).get("repo_key")
-            if isinstance(key, str) and os.path.realpath(key) == os.path.realpath(found[1]):
-                loc = ["--workspace", ws]
-        if loc is None:
-            main = main_of(path)
-            if not main:
-                return
-            loc = ["--cwd", main]
+        main = main_of(path)
+        if not main:
+            return
+        # The same rule as a worker's (spaces.py): under the session's space or the one herdr knows for the
+        # repository. With neither, herdr would make a new top-level space: the session stays in its own tab.
+        ws, _ = spaces.repo_space(main, env.get("HERDR_WORKSPACE_ID"), herdr)
+        if not ws:
+            return
         label = os.path.basename(path.rstrip(os.sep))
-        opened = herdr(["worktree", "open", *loc, "--path", path, "--label", label, "--no-focus"])
+        opened = herdr(["worktree", "open", "--workspace", ws, "--path", path, "--label", label, "--no-focus"])
         return label if opened else None
     if resp.get("action") != "remove" or os.path.exists(path):
         return                                         # kept, or still on disk: the workspace still shows it

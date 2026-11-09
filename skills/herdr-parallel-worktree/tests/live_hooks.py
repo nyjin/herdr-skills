@@ -277,14 +277,15 @@ def main():
           "PASS" if made and not decisions(log7) else ("FAIL" if decisions(log7) else "INCONCLUSIVE"))
 
     # Run 8 — the main session's own worktree: EnterWorktree goes through, Claude Code makes it as usual, the hook
-    # opens it in (fake) herdr, and ExitWorktree(remove) closes that workspace.
+    # opens it in (fake) herdr under the session's space (herdr knows `wsrc` for the repository), and
+    # ExitWorktree(remove) closes that workspace.
     log8, set8, fake8 = os.path.join(tmp, "run8.log"), os.path.join(tmp, "run8.json"), os.path.join(tmp, "fake8")
     os.makedirs(fake8)
     write_settings(set8, log8)
     claude(repo, (
         "This is a hook test. Do these three steps in order, then reply done. (1) Use the EnterWorktree tool with "
         "name 'live8'. (2) Run `pwd` with Bash. (3) Use the ExitWorktree tool with action 'remove'."),
-        set8, a.model, dict(herdr, HERDR_WORKSPACE_ID="wsrc"), fake8)
+        set8, a.model, dict(herdr, HERDR_WORKSPACE_ID="wsrc", FAKE_HERDR_SOURCE_WS="wsrc"), fake8)
     made8 = os.path.join(repo, ".claude", "worktrees", "live8")
     calls8 = fake_herdr.calls(fake8)
     opened = [c for c in calls8 if c[:2] == ["worktree", "open"] and c[c.index("--path") + 1] == made8]
