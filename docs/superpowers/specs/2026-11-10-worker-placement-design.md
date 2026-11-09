@@ -132,7 +132,7 @@ drift를 막는 장치:
 
 ## 8. 결과 (2026-11-10)
 
-- 단위 테스트 261개, `scripts/check.sh` 전체 통과.
+- 단위 테스트 267개(아래 리뷰 수정 포함), `scripts/check.sh` 전체 통과(herdr 워커 밖에서 실행).
 - 실환경 확인 11/11 통과. herdr 0.9.0, 임시 저장소 셋, 이 세션의 스페이스 대신 레포에 묶이지 않은 `lab-host` 스페이스를 썼고, 만든 것은 모두 지웠다.
 
 | # | 상황 | 결과 |
@@ -146,3 +146,12 @@ drift를 막는 장치:
 - 워커 역할 문단과 `--workdir` 닫는 문단의 문구는 §6의 빌더 검토 결정대로 정했다(§4에 반영).
 - herdr와 git 모두 worktree를 지운 뒤 빈 부모 디렉터리(`~/.herdr/worktrees/<repo>/`)를 남긴다. 원래 동작이므로 손대지 않았다.
 - 훅 쪽 변경(R8, 워커 역할 문단)은 단위 테스트로만 확인했다. 지금 이 세션에서 실제로 도는 훅은 main 체크아웃(설치본)의 옛 코드다. `live_hooks.py`와 `live_skill.py`(claude -p 실행)는 이번에 돌리지 않았다. 맞춰 고친 뒤 구문만 확인했다.
+
+### 최종 리뷰 뒤 고친 것
+
+브랜치 전체 리뷰(herdr 탭 `placement-rev`, 읽기 전용)는 "고친 뒤 머지"였다. 고친 것:
+- `finalize-brief.py`: 닫는 문단은 옵션이 먼저 정한다. 옵션이 없을 때만 Environment 섹션 안의 `- Working directory:` 줄로 정한다. `--workdir` 없이 Environment를 다시 쓰면 그 줄을 옮겨 온다. 전에는 `--workdir` 브리프를 `--outside`로 다시 돌리면 "이 브랜치에 커밋하라"로 뒤집혔다.
+- `runs.py`: 탭 배치 dispatch 계획의 `<plan>-rev` 탭도 정리 판정에 넣는다. 같은 스페이스에서 라벨이 `<plan>-rev`이고 pane이 같은 worktree에 있는 탭만 본다. 그 탭이 working, blocked이거나 사용자가 보고 있으면 남기고, 정리할 때 함께 닫는다. `add --placement`는 필수다. 빠뜨리면 정리 명령이 호스트 스페이스를 겨누게 되기 때문이다.
+- `place.py`: 기존 브랜치(`--base`)나 없는 브랜치(`--existing`)를 herdr에 맡기지 않고 먼저 거부한다. herdr는 기존 브랜치를 그냥 꺼내 쓴다.
+- 문서: git 밖 디렉터리의 worktree 없는 워커는 훅이 쓰기를 검사하지 못한다는 점, 그 브리프에는 템플릿의 커밋·브랜치 단계를 넣지 않는다는 점, 남아 있던 "자기 worktree", "herdr에 `--path`" 문구를 바로잡았다.
+- 미룬 것(사소함): 워커 안에서 `check.sh hooks`가 실패하는 문제(이 브랜치 이전부터 있었다), 지워진 탭 워커를 되살릴 때 `git worktree prune`이 필요한 경우, herdr 재시작 뒤 탭 id가 다시 쓰이는 경우, `where --dir`에 없는 경로를 준 경우.

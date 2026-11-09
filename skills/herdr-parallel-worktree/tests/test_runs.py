@@ -32,9 +32,16 @@ if cmd == ["pane", "get"]:
     ws, _, n = pane.partition(":p")
     out({"pane": {"pane_id": pane, "tab_id": f"{ws}:t{n}", "workspace_id": ws,
                   "agent_session": {"agent": "claude", "kind": "id", "source": "herdr:claude", "value": f"sess-{pane}"}}})
+# $TABS: more tabs in the space, [{"tab_id", "label", "cwd", "agent_status", "focused"}], one pane each
+tabs = json.loads(os.environ.get("TABS") or "[]")
 if cmd == ["tab", "get"]:
-    out({"tab": {"tab_id": args[2], "agent_status": "idle",
-                 "focused": args[2] in os.environ.get("FOCUSED_TABS", "").split()}})
+    t = next((t for t in tabs if t["tab_id"] == args[2]), {})
+    out({"tab": {"tab_id": args[2], "label": t.get("label"), "agent_status": t.get("agent_status", "idle"),
+                 "focused": t.get("focused", args[2] in os.environ.get("FOCUSED_TABS", "").split())}})
+if cmd == ["tab", "list"]:
+    out({"tabs": [{"tab_id": t["tab_id"], "label": t["label"]} for t in tabs]})
+if cmd == ["pane", "list"]:
+    out({"panes": [{"pane_id": t["tab_id"].replace(":t", ":p"), "tab_id": t["tab_id"], "cwd": t["cwd"]} for t in tabs]})
 if cmd == ["workspace", "get"]:
     out({"workspace": {"workspace_id": args[2], "agent_status": "idle", "focused": False}})
 if cmd == ["worktree", "list"]:
@@ -68,10 +75,10 @@ class RunsTest(unittest.TestCase):
         self.assertEqual(r.returncode, 1)
         return r.stderr
 
-    def add(self, name="w1", pane="w1:p1", *extra):
+    def add(self, name="w1", pane="w1:p1", placement="workspace"):
         return self.runs("add", "--name", name, "--root", self.repo, "--branch", "b", "--base", "abc",
                          "--from-branch", "main", "--worktree", os.path.join(self.tmp, name), "--workspace", "w1",
-                         "--pane", pane, *extra)
+                         "--pane", pane, "--placement", placement)
 
     def git(self, *args):
         return subprocess.run(["git", "-C", self.repo, *args], capture_output=True, text=True, check=True).stdout.strip()
@@ -99,11 +106,17 @@ class RunsTest(unittest.TestCase):
             calls = [json.loads(line) for line in f if line.strip()]
         return [c for c in calls if c[:len(prefix)] == list(prefix)]
 
-    def test_add_records_placement_default_workspace(self):
+    def test_add_requires_placement(self):
+        # a dropped flag would record a tab worker as a workspace one, and cleanup would aim at the host space
+        r = subprocess.run([sys.executable, RUNS_PY, "add", "--name", "w1", "--root", self.repo, "--branch", "b",
+                            "--base", "abc", "--from-branch", "main", "--worktree", os.path.join(self.tmp, "w1"),
+                            "--workspace", "w1", "--pane", "w1:p1"], capture_output=True, text=True, env=self.env)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("--placement", r.stderr)
         self.assertEqual(self.add()["placement"], "workspace")
 
     def test_add_records_tab_placement(self):
-        self.assertEqual(self.add("w1", "w1:p1", "--placement", "tab")["placement"], "tab")
+        self.assertEqual(self.add("w1", "w1:p1", "tab")["placement"], "tab")
         self.assertEqual(self.runs("show", "--root", self.repo, "--name", "w1")[0]["placement"], "tab")
 
     def test_scan_tab_worker_is_judged_by_its_tab(self):
@@ -128,6 +141,30 @@ class RunsTest(unittest.TestCase):
         out = self.scan(FOCUSED_TABS="w1:t5")
         self.assertEqual(out["candidates"], [])
         self.assertIn("user is viewing this tab", out["keep"][0]["reasons"])
+
+    def plan_tabs(self, wt, status="idle", focused=False):
+        return json.dumps([
+            {"tab_id": "w1:t7", "label": "p-rev", "cwd": os.path.join(wt, "sub"), "agent_status": status,
+             "focused": focused},                                                  # the plan's reviewer tab
+            {"tab_id": "w1:t8", "label": "notes", "cwd": wt, "agent_status": "idle"},   # the user's own tab
+            {"tab_id": "w1:t9", "label": "p-rev", "cwd": self.tmp, "agent_status": "idle"},  # elsewhere
+        ])
+
+    def test_scan_tab_plan_keeps_a_working_reviewer_tab(self):
+        wt = self.tab_worker("p-impl")
+        for status, focused, reason in (("working", False, "p-rev is working"),
+                                        ("idle", True, "user is viewing tab p-rev")):
+            with self.subTest(status=status, focused=focused):
+                out = self.scan(TABS=self.plan_tabs(wt, status, focused))
+                self.assertEqual(out["candidates"], [])
+                self.assertIn(reason, out["keep"][0]["reasons"])
+
+    def test_scan_tab_plan_closes_its_reviewer_tab_too(self):
+        wt = self.tab_worker("p-impl")
+        c = self.scan(TABS=self.plan_tabs(wt))["candidates"][0]
+        root = self.git("rev-parse", "--show-toplevel")
+        self.assertEqual(c["remove_command"],
+                         f"git -C {root} worktree remove {wt} && herdr tab close w1:t5 && herdr tab close w1:t7")
 
     def test_record_without_placement_scans_as_workspace(self):
         self.tab_worker()

@@ -107,12 +107,23 @@ def drop_section(lines, title):
     return lines
 
 
-def environment_block(args):
+def section(lines, title):
+    """The lines of the level-2 section `title` (without its heading), or []."""
+    if title not in lines:
+        return []
+    i = lines.index(title)
+    j = next((k for k in range(i + 1, len(lines)) if re.match(r"^#{1,2}\s", lines[k])), len(lines))
+    return lines[i + 1:j]
+
+
+def environment_block(args, kept_workdir=None):
     out = ["## Environment", ""]
     if args.role:
         out.append(f"- Role: {args.role}")
     if args.workdir:
         out.append(f"{WORKDIR_LINE}`{args.workdir}` (no worktree or branch of its own)")
+    elif kept_workdir and not (args.worktree or args.branch):
+        out.append(kept_workdir)              # a rerun with other options: still a worker without a worktree
     elif args.worktree:
         out.append(f"- Worktree: `{args.worktree}`" + (f" (branch `{args.branch}`)" if args.branch else ""))
     elif args.branch:
@@ -173,7 +184,8 @@ def main():
         return 1
     body = "\n".join(l for l in body.splitlines() if l.strip() not in (TAIL, NO_BRANCH_TAIL))
     lines = body.splitlines()
-    env = environment_block(args)
+    kept = next((l for l in section(lines, "## Environment") if l.startswith(WORKDIR_LINE)), None)
+    env = environment_block(args, kept)
     if env:
         drop_section(lines, "## Environment")
         at = next((i + 1 for i, l in enumerate(lines) if l.startswith("# ")), 0)
@@ -188,7 +200,11 @@ def main():
         for p in problems:
             print(f"  - {p}", file=sys.stderr)
         return 1
-    tail = NO_BRANCH_TAIL if any(l.startswith(WORKDIR_LINE) for l in lines) else TAIL
+    # The options decide; without them, the brief's own Environment section does (a rerun of a --workdir brief).
+    if args.workdir or args.worktree or args.branch:
+        tail = NO_BRANCH_TAIL if args.workdir else TAIL
+    else:
+        tail = NO_BRANCH_TAIL if any(l.startswith(WORKDIR_LINE) for l in section(lines, "## Environment")) else TAIL
     try:
         with open(path, "w", encoding="utf-8") as f:
             f.write(body + "\n\n" + tail + "\n")

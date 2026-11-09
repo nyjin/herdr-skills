@@ -6,7 +6,7 @@ herdr does not know which worktrees this skill created, so cleanup only ever con
 
 Usage:
   runs.py add --name N --root ROOT --branch B --base SHA --from-branch FB --worktree WT --workspace W --pane P
-              [--placement workspace|tab] [--brief PATH]
+              --placement workspace|tab [--brief PATH]
   runs.py scan --root ROOT [--fetch]      classify open runs of ROOT: candidates, keep, stale (JSON)
   runs.py mark-cleaned --root ROOT --name N [--session-id SID]
   runs.py mark-open --root ROOT --name N --workspace W --pane P [--placement workspace|tab]
@@ -17,7 +17,8 @@ Usage:
 `placement` is what scripts/place.py decided: "workspace" (the worktree has a workspace of its own, recorded as
 `workspace`) or "tab" (the worker is a tab in `workspace`, the space it runs in; herdr did not open the worktree).
 A record without it was written before 0.9.0 and is a "workspace" run. A tab worker is judged and cleaned up by
-its tab, never by the space it runs in, which is not this skill's to close.
+its tab, never by the space it runs in, which is not this skill's to close; a dispatch plan's `<plan>-impl` tab
+brings its unrecorded `<plan>-rev` tab in the same worktree along (references/dispatch.md).
 
 It records clues, not procedures: which agent herdr saw in the pane and the session reference herdr's
 integration reported (the same data herdr uses to resume agents after a server restart), plus the worktree
@@ -146,7 +147,7 @@ def cmd_add(a):
         die(f"an open run named {a.name} already exists for {root}")
     runs.append({
         "name": a.name, "root": root, "branch": a.branch, "base": a.base, "from_branch": a.from_branch,
-        "worktree": a.worktree, "workspace": a.workspace, "pane": a.pane, "placement": a.placement or "workspace",
+        "worktree": a.worktree, "workspace": a.workspace, "pane": a.pane, "placement": a.placement,
         "brief": a.brief, **session_fields(current_session(a.pane)), "state": "open", "created_at": now(),
         "cleaned_at": None,
     })
@@ -159,6 +160,29 @@ PLACEMENTS = ("workspace", "tab")
 
 def placement(r):
     return r.get("placement") or "workspace"
+
+
+def inside(path, top):
+    return path == top or path.startswith(top.rstrip(os.sep) + os.sep)
+
+
+def companion_tabs(r):
+    """([tab ids], error): a dispatch plan's reviewer tab `<plan>-rev` beside its recorded implementer `<plan>-impl`
+    (references/dispatch.md), in the same space, with a pane working in the same worktree. A workspace placement
+    closes it with the workspace; a tab placement must judge and close it itself. Any other tab is left alone."""
+    if not r["name"].endswith("-impl"):
+        return [], None
+    want = r["name"][:-len("-impl")] + "-rev"
+    tabs, err = herdr_call("tab", "list", "--workspace", r["workspace"])
+    if err:
+        return None, err
+    panes, err = herdr_call("pane", "list", "--workspace", r["workspace"])
+    if err:
+        return None, err
+    ids = {t.get("tab_id") for t in (tabs or {}).get("tabs") or [] if t.get("label") == want}
+    wt = os.path.realpath(r["worktree"])
+    return sorted({p["tab_id"] for p in (panes or {}).get("panes") or []
+                   if p.get("tab_id") in ids and inside(os.path.realpath(p.get("cwd") or "/"), wt)}), None
 
 
 def tab_facts(r):
@@ -178,6 +202,18 @@ def tab_facts(r):
     sess = info.get("agent_session")
     if tab and sess and sess.get("value"):
         facts.update(session_fields(sess))
+    ids, err = companion_tabs(r)
+    if err:
+        return None, err
+    facts["companions"] = []
+    for tid in ids:
+        t, err = herdr_call("tab", "get", tid)
+        if err and err != "tab_not_found":
+            return None, err
+        t = (t or {}).get("tab") or {}
+        if t:
+            facts["companions"].append({"tab": tid, "label": t.get("label"), "agent_status": t.get("agent_status"),
+                                        "focused": t.get("focused", False)})
     return facts, None
 
 
@@ -209,6 +245,11 @@ def classify(r, fetch):
         keep.append(f"worker is {facts['agent_status']}")
     if facts["focused"]:
         keep.append(f"user is viewing this {'tab' if tab else 'workspace'}")
+    for c in facts.get("companions") or []:
+        if c["agent_status"] in ("working", "blocked"):
+            keep.append(f"{c['label']} is {c['agent_status']}")
+        if c["focused"]:
+            keep.append(f"user is viewing tab {c['label']}")
 
     wt, branch, root = r["worktree"], r["branch"], r["root"]
     if not os.path.isdir(wt):
@@ -220,8 +261,9 @@ def classify(r, fetch):
     # A tab worker's worktree was never opened in herdr: git removes it (refusing uncommitted changes), and only
     # then is its own tab closed, never the space it runs in.
     if tab:
-        facts["remove_command"] = f'git -C {root} worktree remove {wt}' + (
-            f' && herdr tab close {facts["tab"]}' if facts["tab_open"] else "")
+        closing = ([facts["tab"]] if facts["tab_open"] else []) + [c["tab"] for c in facts["companions"]]
+        facts["remove_command"] = f'git -C {root} worktree remove {wt}' + "".join(
+            f" && herdr tab close {t}" for t in closing)
     else:
         facts["remove_command"] = (f'herdr worktree remove --workspace {r["workspace"]}' if facts["workspace_open"]
                                    else f'git -C {root} worktree remove {wt}')
@@ -338,7 +380,7 @@ def main():
     s = sub.add_parser("add")
     for k in ("name", "root", "branch", "base", "from-branch", "worktree", "workspace", "pane"):
         s.add_argument(f"--{k}", required=True)
-    s.add_argument("--placement", choices=PLACEMENTS)
+    s.add_argument("--placement", choices=PLACEMENTS, required=True)   # place.py's output; no default to fall back on
     s.add_argument("--brief")
     s = sub.add_parser("scan"); s.add_argument("--root", required=True); s.add_argument("--fetch", action="store_true")
     s = sub.add_parser("mark-cleaned"); s.add_argument("--root", required=True); s.add_argument("--name", required=True)

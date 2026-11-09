@@ -119,6 +119,25 @@ class FinalizeTest(unittest.TestCase):
         self.assertEqual(text.count(NO_BRANCH_TAIL), 1)
         self.assertNotIn(TAIL, text)
 
+    def test_rerun_with_other_options_keeps_the_workdir(self):
+        # dispatch.md adds outside paths on a rerun; the Environment is rewritten, the working directory stays
+        self.write("brief.md", BRIEF)
+        self.assertEqual(self.run_script("--workdir", "/w/eval").returncode, 0)
+        for extra in (["--outside", "/o/x", "shared"], ["--role", "reviewer"]):
+            with self.subTest(extra=extra):
+                r = self.run_script(*extra)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                text = self.read()
+                self.assertIn("- Working directory: `/w/eval`", text)
+                self.assertEqual(text.count(NO_BRANCH_TAIL), 1)
+                self.assertNotIn(TAIL, text)
+
+    def test_only_the_environment_section_marks_a_workdir_brief(self):
+        self.write("brief.md", "# [t] x\n\n## Goal\ndone\n\n## Notes\n- Working directory: `/elsewhere` is mentioned\n")
+        r = self.run_script("--worktree", "/w/a", "--branch", "b")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(self.read().endswith(TAIL + "\n"))
+
     def test_a_branch_tail_gives_way_to_workdir(self):
         self.write("brief.md", BRIEF + "\n" + TAIL + "\n")
         self.assertEqual(self.run_script("--workdir", "/w/eval").returncode, 0)

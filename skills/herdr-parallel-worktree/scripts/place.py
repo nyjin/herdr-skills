@@ -21,8 +21,8 @@ this session's space ($HERDR_WORKSPACE_ID). It never lets herdr make a new top-l
 Prints JSON: {"placement": "workspace"|"tab", "space": the space it belongs under, "why"} for where, plus
 "workspace" (where the worker's tab goes: the worktree's workspace, or this session's space for a tab),
 "worktree" and "since" (milliseconds, taken just before herdr or git acted; worker-pane.py --since) for worktree
-and reopen. Nothing is overwritten: an occupied path, a failed git or herdr call, or herdr being unreachable
-prints the reason on stderr and exits 1.
+and reopen. Nothing is overwritten: an existing branch with --base (or a missing one with --existing), an
+occupied path, a failed git or herdr call, or herdr being unreachable prints the reason on stderr and exits 1.
 """
 import argparse
 import json
@@ -115,6 +115,13 @@ def cmd_worktree(a):
     cur = current()
     root = toplevel(a.root) or die(f"not a git repository: {a.root}")
     path = os.path.normpath(os.path.join(root, os.path.expanduser(a.path))) if a.path else None
+    # Checked here, not left to herdr or git: herdr checks an existing branch out, so a new worker would
+    # silently start on an old branch's commits.
+    exists = git("-C", root, "rev-parse", "--verify", "--quiet", f"refs/heads/{a.branch}")[0] == 0
+    if a.base and exists:
+        die(f"branch {a.branch} already exists: nothing was created (resume it, or pick another branch)")
+    if a.existing and not exists:
+        die(f"branch {a.branch} does not exist: nothing was created")
     placement, space, why = decide(root, cur)
     if placement == "workspace":
         args = ["worktree", "create", "--workspace", space, "--branch", a.branch]

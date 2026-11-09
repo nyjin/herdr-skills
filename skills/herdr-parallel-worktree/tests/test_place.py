@@ -143,10 +143,27 @@ class PlaceTest(unittest.TestCase):
         self.assertEqual(self.git("for-each-ref", "--format=%(refname:short)", "refs/heads/"), "b2\nmain")
 
     def test_existing_branch_in_a_space_passes_no_base(self):
+        self.git("branch", "b2")
         self.plan(source="w7")
         self.place("worktree", "--root", self.repo, "--name", "n2", "--branch", "b2", "--existing",
                    "--path", os.path.join(self.tmp, "wt-b2"))
         self.assertNotIn("--base", self.creates()[0])
+
+    def test_an_existing_branch_is_refused_in_a_space_too(self):
+        # herdr would check the old branch out; a new worker must not start on an old branch's commits
+        self.git("branch", "b1")
+        self.plan(source="w7")
+        self.assertIn("b1", self.new(ok=False))
+        self.assertEqual(self.creates(), [])
+
+    def test_existing_needs_the_branch(self):
+        for source in ("w7", None):
+            with self.subTest(source=source):
+                self.plan(source=source)
+                self.assertIn("nope", self.place("worktree", "--root", self.repo, "--name", "n1", "--branch", "nope",
+                                                 "--existing", ok=False))
+                self.assertEqual(self.creates(), [])
+                self.assertEqual(self.git("for-each-ref", "--format=%(refname:short)", "refs/heads/"), "main")
 
     def test_occupied_path_is_refused(self):
         wt = os.path.join(self.tmp, "busy")
