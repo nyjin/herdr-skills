@@ -52,7 +52,7 @@ class SkillTextTest(unittest.TestCase):
 
     def test_finalize_options_documented(self):
         text = read(BRIEF_FILLING)
-        for opt in ("--outside", "--then"):
+        for opt in ("--outside", "--then", "--workdir"):
             with self.subTest(option=opt):
                 self.assertTrue(opt in text, f"brief-filling.md does not document {opt}")
 

@@ -114,6 +114,7 @@ The script:
 Options write two sections; a rerun replaces them:
 
 - `--role TEXT`, `--worktree PATH`, `--branch NAME` and `--outside PATH REASON` (repeatable) write `## Environment` right after the title. Each `--outside` becomes an `- Outside path:` line; the hooks let a worker write in another repository only under a path one of its briefs lists this way. The path must be absolute.
+- `--workdir PATH`, in place of `--worktree` and `--branch`, is for a worker without a worktree (SKILL.md, "A worker without a worktree"): it writes a `- Working directory:` line, and the closing paragraph then tells the worker not to commit and to change no file git tracks. A rerun keeps that paragraph; a follow-up file for such a worker is finalized with `--workdir` too.
 - `--then FILE` writes `## On completion` from that file, just before the closing paragraph: what the worker does after committing, such as handing a re-review to another tab (`references/dispatch.md` section 5). The file must not contain `#` or `##` heading lines: sections are replaced by heading, so a heading inside it duplicates on a rerun.
 
 ```bash

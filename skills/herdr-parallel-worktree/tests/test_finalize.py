@@ -14,6 +14,11 @@ TAIL = (
     "with a `## Result` heading that covers the change summary, test results and open issues. "
     "Do not push or open a pull request."
 )
+NO_BRANCH_TAIL = (
+    "When the work is done, end your final response with a `## Result` heading that covers what you did, "
+    "test results and open issues. You have no branch of your own: do not commit, and change no file git tracks. "
+    "Do not push or open a pull request."
+)
 BRIEF = "# [t] x\n\n## Goal\ndone\n"
 ENV_ARGS = ["--role", "reviewer", "--worktree", "/w/a", "--branch", "b", "--outside", "/o/data", "shared output"]
 ENV_BLOCK = (
@@ -93,8 +98,40 @@ class FinalizeTest(unittest.TestCase):
     def test_help_lists_every_option(self):
         r = subprocess.run([sys.executable, SCRIPT, "--help"], capture_output=True, text=True)
         self.assertEqual(r.returncode, 0)
-        for opt in ("--role", "--worktree", "--branch", "--outside", "--then"):
+        for opt in ("--role", "--worktree", "--branch", "--workdir", "--outside", "--then"):
             self.assertIn(opt, r.stdout)
+
+    def test_workdir_writes_the_line_and_the_no_commit_tail(self):
+        self.write("brief.md", BRIEF)
+        r = self.run_script("--role", "evaluator", "--workdir", "/w/eval")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.read(), "# [t] x\n\n## Environment\n\n- Role: evaluator\n"
+                         "- Working directory: `/w/eval` (no worktree or branch of its own)\n\n## Goal\ndone\n\n"
+                         + NO_BRANCH_TAIL + "\n")
+        self.assertTrue(NO_BRANCH_TAIL.endswith("Do not push or open a pull request."))   # step 3's wait-output
+
+    def test_rerun_keeps_one_no_commit_tail(self):
+        self.write("brief.md", BRIEF)
+        self.assertEqual(self.run_script("--workdir", "/w/eval").returncode, 0)
+        r = self.run_script()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        text = self.read()
+        self.assertEqual(text.count(NO_BRANCH_TAIL), 1)
+        self.assertNotIn(TAIL, text)
+
+    def test_a_branch_tail_gives_way_to_workdir(self):
+        self.write("brief.md", BRIEF + "\n" + TAIL + "\n")
+        self.assertEqual(self.run_script("--workdir", "/w/eval").returncode, 0)
+        self.assertNotIn(TAIL, self.read())
+        self.assertEqual(self.read().count(NO_BRANCH_TAIL), 1)
+
+    def test_workdir_with_worktree_is_refused(self):
+        self.write("brief.md", BRIEF)
+        for extra in (["--worktree", "/w/a"], ["--branch", "b"]):
+            with self.subTest(extra=extra):
+                r = self.run_script("--workdir", "/w/eval", *extra)
+                self.assertNotEqual(r.returncode, 0)
+                self.assertEqual(self.read(), BRIEF)
 
     def test_replacement_keeps_the_next_section(self):
         self.write("brief.md", "# [t] x\n\n## Environment\n\n- Role: old\n\n## Goal\ndone\n\n## On completion\nold\n\n## Notes\nn\n")

@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """Finalize a filled worker brief.
 
-Usage: finalize-brief.py BRIEF [--role TEXT] [--worktree PATH] [--branch NAME] [--outside PATH REASON]... [--then FILE]
+Usage: finalize-brief.py BRIEF [--role TEXT] [--worktree PATH] [--branch NAME] [--workdir PATH]
+                         [--outside PATH REASON]... [--then FILE]
 
 1. Strip HTML comments (guidance) outside code blocks.
 2. Fail on leftover placeholders ({{...}}), [NEEDS CLARIFICATION ...] markers, or sections with no content.
-3. Remove any existing closing paragraph and append it exactly once at the end.
-4. With --role, --worktree, --branch or --outside, write (or replace) the "## Environment" section right after the
-   title. With --then, write (or replace) the "## On completion" section from that file, just before the closing paragraph.
+3. Remove any existing closing paragraph and append it exactly once at the end. A brief whose Environment names a
+   working directory (--workdir: a worker without a worktree) gets the closing paragraph that says not to commit.
+4. With --role, --worktree, --branch, --workdir or --outside, write (or replace) the "## Environment" section right
+   after the title. With --then, write (or replace) the "## On completion" section from that file, just before the
+   closing paragraph.
 
 On success, rewrite the file and print its path. On failure, leave the file untouched, print the reasons to stderr, and exit 1.
 """
@@ -21,6 +24,13 @@ TAIL = (
     "with a `## Result` heading that covers the change summary, test results and open issues. "
     "Do not push or open a pull request."
 )
+# For a worker without a worktree (--workdir). Its last sentence is TAIL's: SKILL.md step 3 waits for it.
+NO_BRANCH_TAIL = (
+    "When the work is done, end your final response with a `## Result` heading that covers what you did, "
+    "test results and open issues. You have no branch of your own: do not commit, and change no file git tracks. "
+    "Do not push or open a pull request."
+)
+WORKDIR_LINE = "- Working directory: "
 FENCE = re.compile(r"^\s{0,3}(`{3,}|~{3,})")
 
 
@@ -101,7 +111,9 @@ def environment_block(args):
     out = ["## Environment", ""]
     if args.role:
         out.append(f"- Role: {args.role}")
-    if args.worktree:
+    if args.workdir:
+        out.append(f"{WORKDIR_LINE}`{args.workdir}` (no worktree or branch of its own)")
+    elif args.worktree:
         out.append(f"- Worktree: `{args.worktree}`" + (f" (branch `{args.branch}`)" if args.branch else ""))
     elif args.branch:
         out.append(f"- Branch: `{args.branch}`")
@@ -116,6 +128,9 @@ def parse_args():
     ap.add_argument("--role", help="the worker's role, written to the Environment section")
     ap.add_argument("--worktree", metavar="PATH", help="the worker's worktree path")
     ap.add_argument("--branch", metavar="NAME", help="the worker's branch, written after the worktree path")
+    ap.add_argument("--workdir", metavar="PATH",
+                    help="for a worker without a worktree: the directory it works in; the closing paragraph then "
+                         "tells it not to commit (kept on later runs)")
     ap.add_argument("--outside", nargs=2, action="append", metavar=("PATH", "REASON"),
                     help="an absolute path outside the worktree the worker may use, and why (repeatable)")
     ap.add_argument("--then", metavar="FILE",
@@ -126,6 +141,10 @@ def parse_args():
 def main():
     args = parse_args()
     path = args.brief
+    if args.workdir and (args.worktree or args.branch):
+        print(f"{path}: --workdir is for a worker without a worktree; it does not go with --worktree or --branch",
+              file=sys.stderr)
+        return 1
     for p, _ in args.outside or []:
         if not os.path.isabs(p):
             print(f"{path}: --outside path must be absolute: {p}", file=sys.stderr)
@@ -152,7 +171,7 @@ def main():
     except ValueError as e:
         print(f"{path}: {e}", file=sys.stderr)
         return 1
-    body = "\n".join(l for l in body.splitlines() if l.strip() != TAIL)
+    body = "\n".join(l for l in body.splitlines() if l.strip() not in (TAIL, NO_BRANCH_TAIL))
     lines = body.splitlines()
     env = environment_block(args)
     if env:
@@ -169,9 +188,10 @@ def main():
         for p in problems:
             print(f"  - {p}", file=sys.stderr)
         return 1
+    tail = NO_BRANCH_TAIL if any(l.startswith(WORKDIR_LINE) for l in lines) else TAIL
     try:
         with open(path, "w", encoding="utf-8") as f:
-            f.write(body + "\n\n" + TAIL + "\n")
+            f.write(body + "\n\n" + tail + "\n")
     except OSError as e:
         print(f"{path}: cannot write brief: {e.strerror}", file=sys.stderr)
         return 1
