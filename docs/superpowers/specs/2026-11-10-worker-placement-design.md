@@ -129,3 +129,20 @@ drift를 막는 장치:
 - 단위: `spaces.repo_space`(세 경우와 herdr 실패), `place.py` 세 하위 명령(가짜 herdr, 진짜 git), `runs.py` 탭 판정과 `remove_command`, `finalize-brief.py --workdir`, `route.py` R8의 세 경우, 문서 drift 검사.
 - 실환경(herdr 0.9.0, 임시 저장소): 세 배치 각각에서 `place.py worktree` → `worker-pane.py`까지 돌린다. 사이드바 배치와 탭 위치는 `workspace list`와 `tab list`로 확인한다. claude는 띄우지 않는다. 그 뒤 `runs.py scan`의 `remove_command`로 정리한다.
 - `scripts/check.sh` 전체.
+
+## 8. 결과 (2026-11-10)
+
+- 단위 테스트 261개, `scripts/check.sh` 전체 통과.
+- 실환경 확인 11/11 통과. herdr 0.9.0, 임시 저장소 셋, 이 세션의 스페이스 대신 레포에 묶이지 않은 `lab-host` 스페이스를 썼고, 만든 것은 모두 지웠다.
+
+| # | 상황 | 결과 |
+|---|---|---|
+| a | 레포의 스페이스(`lab-c`)가 따로 있음 | `placement: workspace`, `lab-c` 밑에 레포에 링크된 worktree 스페이스, 그 안에 워커 탭 `pc1`, 셸 준비됨 |
+| b | 레포의 스페이스가 없음 | `placement: tab`, `lab-host`에 탭 `pd1`(cwd = worktree), 스페이스 수 그대로, 경로는 herdr 기본값(`~/.herdr/worktrees/repoD/feat-pd1`) |
+| c | 묶이지 않은 레포 스페이스에 `place.py reopen` | `herdr worktree open --workspace`가 동작해 그 밑에 열림 |
+| d | `runs.py scan`의 `remove_command` | 스페이스 워커는 `herdr worktree remove`로, 탭 워커는 worktree를 지운 뒤 자기 탭만 닫힘. `lab-host`는 남음 |
+
+설계와 달라진 것:
+- 워커 역할 문단과 `--workdir` 닫는 문단의 문구는 §6의 빌더 검토 결정대로 정했다(§4에 반영).
+- herdr와 git 모두 worktree를 지운 뒤 빈 부모 디렉터리(`~/.herdr/worktrees/<repo>/`)를 남긴다. 원래 동작이므로 손대지 않았다.
+- 훅 쪽 변경(R8, 워커 역할 문단)은 단위 테스트로만 확인했다. 지금 이 세션에서 실제로 도는 훅은 main 체크아웃(설치본)의 옛 코드다. `live_hooks.py`와 `live_skill.py`(claude -p 실행)는 이번에 돌리지 않았다. 맞춰 고친 뒤 구문만 확인했다.
