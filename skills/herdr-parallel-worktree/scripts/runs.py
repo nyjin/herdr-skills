@@ -5,12 +5,19 @@ The registry is DATA_DIR/runs.json (DATA_DIR = ${HERDR_SKILLS_DATA_HOME:-~/.loca
 herdr does not know which worktrees this skill created, so cleanup only ever considers entries recorded here.
 
 Usage:
-  runs.py add --name N --root ROOT --branch B --base SHA --from-branch FB --worktree WT --workspace W --pane P [--brief PATH]
+  runs.py add --name N --root ROOT --branch B --base SHA --from-branch FB --worktree WT --workspace W --pane P
+              [--placement workspace|tab] [--brief PATH]
   runs.py scan --root ROOT [--fetch]      classify open runs of ROOT: candidates, keep, stale (JSON)
   runs.py mark-cleaned --root ROOT --name N [--session-id SID]
-  runs.py mark-open --root ROOT --name N --workspace W --pane P
-  runs.py relocate --root ROOT --name N --workspace W --pane P   an open run reopened in a new workspace
+  runs.py mark-open --root ROOT --name N --workspace W --pane P [--placement workspace|tab]
+  runs.py relocate --root ROOT --name N --workspace W --pane P [--placement workspace|tab]
+                                          an open run reopened in a new place
   runs.py show --root ROOT [--name N]     print runs (JSON)
+
+`placement` is what scripts/place.py decided: "workspace" (the worktree has a workspace of its own, recorded as
+`workspace`) or "tab" (the worker is a tab in `workspace`, the space it runs in; herdr did not open the worktree).
+A record without it was written before 0.9.0 and is a "workspace" run. A tab worker is judged and cleaned up by
+its tab, never by the space it runs in, which is not this skill's to close.
 
 It records clues, not procedures: which agent herdr saw in the pane and the session reference herdr's
 integration reported (the same data herdr uses to resume agents after a server restart), plus the worktree
@@ -139,33 +146,69 @@ def cmd_add(a):
         die(f"an open run named {a.name} already exists for {root}")
     runs.append({
         "name": a.name, "root": root, "branch": a.branch, "base": a.base, "from_branch": a.from_branch,
-        "worktree": a.worktree, "workspace": a.workspace, "pane": a.pane, "brief": a.brief,
-        **session_fields(current_session(a.pane)), "state": "open", "created_at": now(), "cleaned_at": None,
+        "worktree": a.worktree, "workspace": a.workspace, "pane": a.pane, "placement": a.placement or "workspace",
+        "brief": a.brief, **session_fields(current_session(a.pane)), "state": "open", "created_at": now(),
+        "cleaned_at": None,
     })
     save(runs)
     print(json.dumps(runs[-1], ensure_ascii=False))
 
 
-def classify(r, fetch):
-    """Return (kind, reasons, facts); kind is "candidate", "keep" or "stale"."""
-    keep, facts = [], {}
+PLACEMENTS = ("workspace", "tab")
+
+
+def placement(r):
+    return r.get("placement") or "workspace"
+
+
+def tab_facts(r):
+    """(facts, error) for a tab worker, read from its pane and tab only: the space it runs in is someone else's."""
+    pane, err = herdr_call("pane", "get", r["pane"])
+    if err and err != "pane_not_found":
+        return None, err
+    info = (pane or {}).get("pane") or {}
+    tab = {}
+    if info.get("tab_id"):
+        t, err = herdr_call("tab", "get", info["tab_id"])
+        if err and err != "tab_not_found":
+            return None, err
+        tab = (t or {}).get("tab") or {}
+    facts = {"tab": info.get("tab_id") if tab else None, "tab_open": bool(tab),
+             "agent_status": tab.get("agent_status"), "focused": tab.get("focused", False)}
+    sess = info.get("agent_session")
+    if tab and sess and sess.get("value"):
+        facts.update(session_fields(sess))
+    return facts, None
+
+
+def workspace_facts(r):
     ws, err = herdr_call("workspace", "get", r["workspace"])
     if err and err != "workspace_not_found":
-        # Only an explicit "not found" means the user closed it. Any other failure must not be read as
-        # "closed": that would skip the worker-status check and remove a worktree under a live worker.
-        return "keep", [f"could not query herdr ({err})"], facts
+        return None, err
     wsinfo = (ws or {}).get("workspace") or {}
-    facts["workspace_open"] = bool(wsinfo)
-    facts["agent_status"] = wsinfo.get("agent_status")
-    facts["focused"] = wsinfo.get("focused", False)
+    facts = {"workspace_open": bool(wsinfo), "agent_status": wsinfo.get("agent_status"),
+             "focused": wsinfo.get("focused", False)}
     if wsinfo:
         sess = current_session(r["pane"])
         if sess and sess.get("value"):
             facts.update(session_fields(sess))
+    return facts, None
+
+
+def classify(r, fetch):
+    """Return (kind, reasons, facts); kind is "candidate", "keep" or "stale"."""
+    keep, facts = [], {"placement": placement(r)}
+    tab = facts["placement"] == "tab"
+    found, err = tab_facts(r) if tab else workspace_facts(r)
+    if err:
+        # Only an explicit "not found" means the user closed it. Any other failure must not be read as
+        # "closed": that would skip the worker-status check and remove a worktree under a live worker.
+        return "keep", [f"could not query herdr ({err})"], facts
+    facts.update(found)
     if facts["agent_status"] in ("working", "blocked"):
         keep.append(f"worker is {facts['agent_status']}")
     if facts["focused"]:
-        keep.append("user is viewing this workspace")
+        keep.append(f"user is viewing this {'tab' if tab else 'workspace'}")
 
     wt, branch, root = r["worktree"], r["branch"], r["root"]
     if not os.path.isdir(wt):
@@ -174,8 +217,14 @@ def classify(r, fetch):
         facts["remove_command"] = None
         return "stale", [], facts
     # The user may have closed the workspace by hand; the worktree then has no workspace to remove it with.
-    facts["remove_command"] = (f'herdr worktree remove --workspace {r["workspace"]}' if wsinfo
-                               else f'git -C {root} worktree remove {wt}')
+    # A tab worker's worktree was never opened in herdr: git removes it (refusing uncommitted changes), and only
+    # then is its own tab closed, never the space it runs in.
+    if tab:
+        facts["remove_command"] = f'git -C {root} worktree remove {wt}' + (
+            f' && herdr tab close {facts["tab"]}' if facts["tab_open"] else "")
+    else:
+        facts["remove_command"] = (f'herdr worktree remove --workspace {r["workspace"]}' if facts["workspace_open"]
+                                   else f'git -C {root} worktree remove {wt}')
     rc, dirty = git(wt, "status", "--porcelain", "--untracked-files=all")
     if rc != 0:
         keep.append("git status failed in worktree")
@@ -254,7 +303,7 @@ def cmd_mark_open(a):
     r = find(runs, norm_root(a.root), a.name, "cleaned")
     if not r:
         die(f"no cleaned run named {a.name}")
-    r.update(state="open", workspace=a.workspace, pane=a.pane, cleaned_at=None)
+    r.update(state="open", workspace=a.workspace, pane=a.pane, cleaned_at=None, placement=a.placement or placement(r))
     # The resumed (or freshly started) agent may report a different agent or session; keep the clues current.
     sess = current_session(a.pane)
     if sess and sess.get("value"):
@@ -264,12 +313,12 @@ def cmd_mark_open(a):
 
 
 def cmd_relocate(a):
-    """An open run whose workspace was closed and reopened (herdr worktree open) lives in a new workspace and pane."""
+    """An open run whose workspace or tab was closed and given back (place.py reopen) lives in a new place."""
     runs = load()
     r = find(runs, norm_root(a.root), a.name, "open")
     if not r:
         die(f"no open run named {a.name}")
-    r.update(workspace=a.workspace, pane=a.pane)
+    r.update(workspace=a.workspace, pane=a.pane, placement=a.placement or placement(r))
     sess = current_session(a.pane)
     if sess and sess.get("value"):
         r.update(session_fields(sess))
@@ -289,14 +338,15 @@ def main():
     s = sub.add_parser("add")
     for k in ("name", "root", "branch", "base", "from-branch", "worktree", "workspace", "pane"):
         s.add_argument(f"--{k}", required=True)
+    s.add_argument("--placement", choices=PLACEMENTS)
     s.add_argument("--brief")
     s = sub.add_parser("scan"); s.add_argument("--root", required=True); s.add_argument("--fetch", action="store_true")
     s = sub.add_parser("mark-cleaned"); s.add_argument("--root", required=True); s.add_argument("--name", required=True)
     s.add_argument("--session-id"); s.add_argument("--agent")
-    s = sub.add_parser("mark-open"); s.add_argument("--root", required=True); s.add_argument("--name", required=True)
-    s.add_argument("--workspace", required=True); s.add_argument("--pane", required=True)
-    s = sub.add_parser("relocate"); s.add_argument("--root", required=True); s.add_argument("--name", required=True)
-    s.add_argument("--workspace", required=True); s.add_argument("--pane", required=True)
+    for cmd in ("mark-open", "relocate"):
+        s = sub.add_parser(cmd); s.add_argument("--root", required=True); s.add_argument("--name", required=True)
+        s.add_argument("--workspace", required=True); s.add_argument("--pane", required=True)
+        s.add_argument("--placement", choices=PLACEMENTS)
     s = sub.add_parser("show"); s.add_argument("--root", required=True); s.add_argument("--name")
     a = p.parse_args()
     {"add": cmd_add, "scan": cmd_scan, "mark-cleaned": cmd_mark_cleaned,
