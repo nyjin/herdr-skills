@@ -155,3 +155,4 @@ drift를 막는 장치:
 - `place.py`: 기존 브랜치(`--base`)나 없는 브랜치(`--existing`)를 herdr에 맡기지 않고 먼저 거부한다. herdr는 기존 브랜치를 그냥 꺼내 쓴다.
 - 문서: git 밖 디렉터리의 worktree 없는 워커는 훅이 쓰기를 검사하지 못한다는 점, 그 브리프에는 템플릿의 커밋·브랜치 단계를 넣지 않는다는 점, 남아 있던 "자기 worktree", "herdr에 `--path`" 문구를 바로잡았다.
 - 미룬 것(사소함): 워커 안에서 `check.sh hooks`가 실패하는 문제(이 브랜치 이전부터 있었다), 지워진 탭 워커를 되살릴 때 `git worktree prune`이 필요한 경우, herdr 재시작 뒤 탭 id가 다시 쓰이는 경우, `where --dir`에 없는 경로를 준 경우.
+- 고친 뒤 실환경 확인 5/5(herdr 0.9.0). 탭 배치 계획에서 `pf-impl`과 `pf-rev` 탭이 둘 다 지금 스페이스에 열렸고, 스페이스는 새로 생기지 않았다. `scan`은 `pf-rev`를 짝 탭으로 찾았다. `remove_command`는 worktree를 지운 뒤 두 탭을 닫았고, 호스트 스페이스는 남았다. 실사용 레지스트리(`decided-result-impl`, workspace 배치)에 새 `scan`을 읽기 전용으로 돌려도 기록이 바뀌지 않았다.
