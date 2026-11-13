@@ -137,6 +137,11 @@ check_runs() {
 # Unit tests (tests/test_*.py). The live_*.py and hook_cost.py scripts start claude and are run by hand.
 check_unit() {
   python3 -m unittest discover -s "$SKILL/tests" || { echo "::error::unit tests failed"; return 1; }
+  local plugin
+  for plugin in herdr-plugins/*/; do
+    [ -d "${plugin}tests" ] || continue
+    (cd "$plugin" && python3 -m unittest discover -s tests) || { echo "::error::${plugin} unit tests failed"; return 1; }
+  done
 }
 
 run_check() {

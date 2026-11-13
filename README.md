@@ -14,6 +14,18 @@ To install one skill, put its name from the table below in `<skill>`.
 | [`herdr-parallel-worktree`](skills/herdr-parallel-worktree/SKILL.md) | Hands coding work inside herdr to visible workers, one git worktree workspace and one `claude` worker per task, so you can watch each from the sidebar and step in. Works for a single ticket you want to review before the PR as well as several tasks in parallel, and leaves the tabs your herdr plugins lay out in place. Workers get a brief built from a customizable template; it runs on sensible defaults and the first run lists the settings you can change. Finished workers can be cleaned up and resumed later by name, conversation included. |
 <!-- skills:end -->
 
+## herdr plugins
+
+Plugins for herdr itself, installed with `herdr plugin install`, not through Claude Code.
+
+| Plugin | Description |
+|---|---|
+| [`glow-preview`](herdr-plugins/glow-preview/README.md) | Click a markdown or source path, or a Jira, Confluence or GitHub PR link, in a Claude Code pane to read it in a pane to its right: markdown rendered with glow (switchable to source with bat), source with bat, links fetched through acli / jira-cli / cme / gh, with Atlassian MCP as the last resort. Nothing opens without a click. |
+
+```sh
+herdr plugin install nyjin/herdr-skills/herdr-plugins/glow-preview
+```
+
 ## Install
 
 Pick **one** of the two routes below. **Do not use both.** Plugin skills load as `/herdr-skills:<skill>` and individual installs as `/<skill>`; neither replaces the other, so installing the same skill both ways leaves two copies that trigger twice. To switch to individual installs, remove the plugin first with `/plugin uninstall herdr-skills@herdr-skills`.
