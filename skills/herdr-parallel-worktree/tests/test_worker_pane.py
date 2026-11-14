@@ -67,11 +67,13 @@ class WorkerPaneTest(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def run_script(self, logs, ready=(True,), tab_error=False):
+    # Each fake `herdr` call starts a Python process: ~30 ms idle, past 400 ms on a loaded machine. A test that must
+    # settle gets a timeout no machine reaches; only a test that waits for the timeout itself passes a short one.
+    def run_script(self, logs, ready=(True,), tab_error=False, timeout_ms=30000):
         with open(os.path.join(self.tmp, "plan.json"), "w") as f:
             json.dump({"logs": logs, "ready": list(ready), "tab_error": tab_error}, f)
         r = subprocess.run([sys.executable, SCRIPT, "--workspace", "w1", "--worktree", "/wt", "--name", "proj-1",
-                            "--since", "1000", "--poll-ms", "10", "--quiet-ms", "50", "--timeout-ms", "400"],
+                            "--since", "1000", "--poll-ms", "10", "--quiet-ms", "50", "--timeout-ms", str(timeout_ms)],
                            capture_output=True, text=True, env=self.env)
         return r.returncode, json.loads(r.stdout) if r.stdout.strip() else None, r.stderr
 
@@ -111,7 +113,7 @@ class WorkerPaneTest(unittest.TestCase):
         self.assertEqual(out["handlers"], [])
 
     def test_a_failing_log_query_is_not_read_as_no_plugins(self):
-        rc, out, err = self.run_script(["error"])
+        rc, out, err = self.run_script(["error"], timeout_ms=400)
         self.assertEqual(rc, 0, err)
         self.assertFalse(out["settled"])
         self.assertIn("server_unavailable", out["log_error"])
@@ -151,7 +153,7 @@ class WorkerPaneTest(unittest.TestCase):
         self.assertEqual([h["plugin"] for h in out["handlers"]], ["a"])
 
     def test_timeout_still_creates_the_tab_and_names_the_running_handler(self):
-        rc, out, err = self.run_script([[log("slow", "running")]])
+        rc, out, err = self.run_script([[log("slow", "running")]], timeout_ms=400)
         self.assertEqual(rc, 0, err)
         self.assertFalse(out["settled"])
         self.assertEqual(out["still_running"], ["slow"])
@@ -171,7 +173,7 @@ class WorkerPaneTest(unittest.TestCase):
         self.assertEqual(sum(c[:2] == ["pane", "process-info"] for c in self.calls()), 4)
 
     def test_shell_never_ready_is_reported_not_hidden(self):
-        rc, out, err = self.run_script([[]], (False,))
+        rc, out, err = self.run_script([[]], (False,), timeout_ms=400)
         self.assertEqual(rc, 0, err)
         self.assertFalse(out["shell_ready"])
 
