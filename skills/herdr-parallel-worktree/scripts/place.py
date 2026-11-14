@@ -10,11 +10,12 @@ The rule (scripts/hooks/spaces.py, shared with the hooks): the worker goes under
 space is bound to the repository, else under the space herdr knows for the repository, else it runs as a tab in
 this session's space ($HERDR_WORKSPACE_ID). It never lets herdr make a new top-level space.
 
-- where: only decide; for a worker without a worktree working in DIR (outside git: a tab here).
+- where: only decide; for a worker without a worktree working in DIR, which must exist (outside git: a tab here).
 - worktree: decide and create the worktree. Placement "workspace": `herdr worktree create --workspace <space>`,
   which opens the worktree as a workspace under that space. Placement "tab": `git worktree add`, at --path or
   herdr's default path (~/.herdr/worktrees/<repo>/<branch, "/" as "-">); nothing is opened in herdr.
-  --existing checks out an existing branch (resume) instead of creating one from --base.
+  --existing checks out an existing branch (resume) instead of creating one from --base. A worktree whose
+  directory was deleted outside git but is still registered is pruned from git's list first, so it can come back.
 - reopen: the worktree WT still exists but its workspace or tab is gone. Placement "workspace":
   `herdr worktree open --workspace <space>`; "tab": nothing to open.
 
@@ -101,8 +102,29 @@ def repo_name(root):
     return os.path.basename(os.path.dirname(common)) if rc == 0 else os.path.basename(root)
 
 
+def default_path(root, branch):
+    """herdr's default worktree path: ~/.herdr/worktrees/<repo>/<branch, "/" as "-">."""
+    return os.path.join(os.path.expanduser("~"), ".herdr", "worktrees", repo_name(root), branch.replace("/", "-"))
+
+
+def prune_if_stale(root, path):
+    """A worktree whose directory was deleted outside git stays registered, and git then refuses to add it again
+    (and to check its branch out elsewhere). Let git forget missing worktrees before bringing this one back."""
+    if os.path.exists(path):
+        return
+
+    def norm(p):   # the directory is gone, so resolve symlinks (macOS /var -> /private/var) through its parent
+        return os.path.join(os.path.realpath(os.path.dirname(p)), os.path.basename(p))
+    rc, listed, _ = git("-C", root, "worktree", "list", "--porcelain")
+    registered = {norm(l[len("worktree "):]) for l in listed.splitlines() if l.startswith("worktree ")}
+    if rc == 0 and norm(path) in registered:
+        git("-C", root, "worktree", "prune")
+
+
 def cmd_where(a):
     cur = current()
+    if not os.path.isdir(a.dir):
+        die(f"{a.dir} is not a directory: the worker's directory must exist before its tab opens there")
     root = toplevel(a.dir)
     if root is None:
         print(json.dumps({"placement": "tab", "space": cur, "why": "outside git"}))
@@ -123,6 +145,7 @@ def cmd_worktree(a):
     if a.existing and not exists:
         die(f"branch {a.branch} does not exist: nothing was created")
     placement, space, why = decide(root, cur)
+    prune_if_stale(root, path or default_path(root, a.branch))
     if placement == "workspace":
         args = ["worktree", "create", "--workspace", space, "--branch", a.branch]
         args += ["--base", a.base] if a.base else []
@@ -135,8 +158,7 @@ def cmd_worktree(a):
         if not workspace or not path:
             die(f"herdr worktree create gave no workspace or path: {json.dumps(made)[:300]}")
     else:
-        path = path or os.path.join(os.path.expanduser("~"), ".herdr", "worktrees", repo_name(root),
-                                    a.branch.replace("/", "-"))
+        path = path or default_path(root, a.branch)
         if os.path.exists(path) and (not os.path.isdir(path) or os.listdir(path)):
             die(f"{path} already exists and is not empty: nothing was created")
         add = ["-b", a.branch, path, a.base] if a.base else [path, a.branch]

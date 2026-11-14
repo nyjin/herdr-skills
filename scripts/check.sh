@@ -8,6 +8,9 @@
 # Errors are printed as GitHub annotations (::error ...), which read fine in a terminal too.
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
+# The checks build their own hook callers. Run from a herdr worker tab (a reviewer running this script), the tab's
+# HERDR_PW_WORKER would make every simulated caller a worker; drop it, and the tab's workspace with it.
+unset HERDR_PW_WORKER HERDR_WORKSPACE_ID
 
 CHECKS=(skill-spec names readme manifests finalize-brief hooks runs unit)
 TMP="${RUNNER_TEMP:-$(mktemp -d)}"

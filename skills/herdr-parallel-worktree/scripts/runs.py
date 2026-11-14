@@ -197,6 +197,10 @@ def tab_facts(r):
         if err and err != "tab_not_found":
             return None, err
         tab = (t or {}).get("tab") or {}
+        if tab.get("label") != r["name"]:
+            # worker-pane.py labels the worker's tab with its name. Another label means the recorded pane's
+            # tab is not the worker's any more (ids reused after a herdr restart, or the user took it over).
+            tab = {}
     facts = {"tab": info.get("tab_id") if tab else None, "tab_open": bool(tab),
              "agent_status": tab.get("agent_status"), "focused": tab.get("focused", False)}
     sess = info.get("agent_session")

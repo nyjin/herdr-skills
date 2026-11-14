@@ -154,5 +154,9 @@ drift를 막는 장치:
 - `runs.py`: 탭 배치 dispatch 계획의 `<plan>-rev` 탭도 정리 판정에 넣는다. 같은 스페이스에서 라벨이 `<plan>-rev`이고 pane이 같은 worktree에 있는 탭만 본다. 그 탭이 working, blocked이거나 사용자가 보고 있으면 남기고, 정리할 때 함께 닫는다. `add --placement`는 필수다. 빠뜨리면 정리 명령이 호스트 스페이스를 겨누게 되기 때문이다.
 - `place.py`: 기존 브랜치(`--base`)나 없는 브랜치(`--existing`)를 herdr에 맡기지 않고 먼저 거부한다. herdr는 기존 브랜치를 그냥 꺼내 쓴다.
 - 문서: git 밖 디렉터리의 worktree 없는 워커는 훅이 쓰기를 검사하지 못한다는 점, 그 브리프에는 템플릿의 커밋·브랜치 단계를 넣지 않는다는 점, 남아 있던 "자기 worktree", "herdr에 `--path`" 문구를 바로잡았다.
-- 미룬 것(사소함): 워커 안에서 `check.sh hooks`가 실패하는 문제(이 브랜치 이전부터 있었다), 지워진 탭 워커를 되살릴 때 `git worktree prune`이 필요한 경우, herdr 재시작 뒤 탭 id가 다시 쓰이는 경우, `where --dir`에 없는 경로를 준 경우.
+- 처음에 미뤘다가 사용자 요청(2026-11-14)으로 고친 사소한 것 넷:
+  - `check.sh`가 `HERDR_PW_WORKER`와 `HERDR_WORKSPACE_ID`를 지우고 시작한다. 이제 워커 탭 안에서도 `hooks` 검사가 통과한다(`test_check.py`).
+  - `place.py worktree`는 디렉터리만 지워지고 git에는 남은 worktree를 먼저 `git worktree prune`으로 정리한 뒤 다시 만든다.
+  - `runs.py`는 기록된 pane의 탭이 지금도 워커 이름을 라벨로 달고 있을 때만 그 탭을 워커의 것으로 본다. 다른 라벨이면 판정에서 빼고 닫지 않는다.
+  - `place.py where --dir`은 없는 경로를 거부한다.
 - 고친 뒤 실환경 확인 5/5(herdr 0.9.0). 탭 배치 계획에서 `pf-impl`과 `pf-rev` 탭이 둘 다 지금 스페이스에 열렸고, 스페이스는 새로 생기지 않았다. `scan`은 `pf-rev`를 짝 탭으로 찾았다. `remove_command`는 worktree를 지운 뒤 두 탭을 닫았고, 호스트 스페이스는 남았다. 실사용 레지스트리(`decided-result-impl`, workspace 배치)에 새 `scan`을 읽기 전용으로 돌려도 기록이 바뀌지 않았다.

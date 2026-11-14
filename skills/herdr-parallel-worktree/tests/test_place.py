@@ -142,6 +142,16 @@ class PlaceTest(unittest.TestCase):
         self.assertEqual(self.git("-C", wt, "branch", "--show-current"), "b2")
         self.assertEqual(self.git("for-each-ref", "--format=%(refname:short)", "refs/heads/"), "b2\nmain")
 
+    def test_a_deleted_but_registered_worktree_comes_back(self):
+        # the directory was removed outside git (a "stale" run): git still lists it and refuses to add it again
+        wt = os.path.join(self.tmp, "wt-b2")
+        self.git("worktree", "add", "-q", "-b", "b2", wt)
+        shutil.rmtree(wt)
+        out = self.place("worktree", "--root", self.repo, "--name", "n2", "--branch", "b2", "--existing",
+                         "--path", wt)
+        self.assertEqual(out["placement"], "tab")
+        self.assertEqual(self.git("-C", wt, "branch", "--show-current"), "b2")
+
     def test_existing_branch_in_a_space_passes_no_base(self):
         self.git("branch", "b2")
         self.plan(source="w7")
@@ -216,6 +226,11 @@ class PlaceTest(unittest.TestCase):
     def test_reopen_needs_the_worktree(self):
         self.place("reopen", "--root", self.repo, "--name", "n1", "--worktree", os.path.join(self.tmp, "gone"),
                    ok=False)
+
+    def test_where_needs_an_existing_directory(self):
+        # a typo must not read as "outside git" and open a tab in a directory that does not exist
+        self.assertIn("missing", self.place("where", "--dir", os.path.join(self.tmp, "missing"), ok=False))
+        self.assertEqual(self.calls(), [])
 
     def test_where_outside_git_is_a_tab_here(self):
         outside = os.path.join(self.tmp, "plain")

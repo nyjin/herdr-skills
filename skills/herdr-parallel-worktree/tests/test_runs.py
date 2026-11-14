@@ -34,9 +34,10 @@ if cmd == ["pane", "get"]:
                   "agent_session": {"agent": "claude", "kind": "id", "source": "herdr:claude", "value": f"sess-{pane}"}}})
 # $TABS: more tabs in the space, [{"tab_id", "label", "cwd", "agent_status", "focused"}], one pane each
 tabs = json.loads(os.environ.get("TABS") or "[]")
-if cmd == ["tab", "get"]:
+if cmd == ["tab", "get"]:   # a tab not in $TABS is labelled $DEFAULT_LABEL (default "t1": tab_worker's name)
     t = next((t for t in tabs if t["tab_id"] == args[2]), {})
-    out({"tab": {"tab_id": args[2], "label": t.get("label"), "agent_status": t.get("agent_status", "idle"),
+    out({"tab": {"tab_id": args[2], "label": t.get("label", os.environ.get("DEFAULT_LABEL", "t1")),
+                 "agent_status": t.get("agent_status", "idle"),
                  "focused": t.get("focused", args[2] in os.environ.get("FOCUSED_TABS", "").split())}})
 if cmd == ["tab", "list"]:
     out({"tabs": [{"tab_id": t["tab_id"], "label": t["label"]} for t in tabs]})
@@ -136,6 +137,15 @@ class RunsTest(unittest.TestCase):
         self.assertEqual(c["remove_command"], f"git -C {root} worktree remove {wt}")
         self.assertFalse(c["tab_open"])
 
+    def test_scan_never_closes_a_tab_that_is_no_longer_the_workers(self):
+        # the recorded pane's tab now carries another label (an id reused after a herdr restart, or a tab the
+        # user took over): it is not the worker's tab any more, so it is neither judged nor closed
+        wt = self.tab_worker()
+        c = self.scan(DEFAULT_LABEL="notes", FOCUSED_TABS="w1:t5")["candidates"][0]
+        root = self.git("rev-parse", "--show-toplevel")
+        self.assertEqual(c["remove_command"], f"git -C {root} worktree remove {wt}")
+        self.assertFalse(c["tab_open"])
+
     def test_scan_focused_tab_is_kept(self):
         self.tab_worker()
         out = self.scan(FOCUSED_TABS="w1:t5")
@@ -155,13 +165,13 @@ class RunsTest(unittest.TestCase):
         for status, focused, reason in (("working", False, "p-rev is working"),
                                         ("idle", True, "user is viewing tab p-rev")):
             with self.subTest(status=status, focused=focused):
-                out = self.scan(TABS=self.plan_tabs(wt, status, focused))
+                out = self.scan(TABS=self.plan_tabs(wt, status, focused), DEFAULT_LABEL="p-impl")
                 self.assertEqual(out["candidates"], [])
                 self.assertIn(reason, out["keep"][0]["reasons"])
 
     def test_scan_tab_plan_closes_its_reviewer_tab_too(self):
         wt = self.tab_worker("p-impl")
-        c = self.scan(TABS=self.plan_tabs(wt))["candidates"][0]
+        c = self.scan(TABS=self.plan_tabs(wt), DEFAULT_LABEL="p-impl")["candidates"][0]
         root = self.git("rev-parse", "--show-toplevel")
         self.assertEqual(c["remove_command"],
                          f"git -C {root} worktree remove {wt} && herdr tab close w1:t5 && herdr tab close w1:t7")
