@@ -1,0 +1,54 @@
+id = "nyjin.glow-preview"
+name = "glow preview"
+version = "0.3.0"
+min_herdr_version = "0.9.3"
+description = "Claude Code 옆 pane에 마크다운(glow)·소스(bat)·Jira/Confluence/PR 링크 내용을 보여 준다"
+platforms = ["macos"]
+
+# The viewer runs from the plugin root by absolute path: the pane's cwd is the source pane's folder.
+[[panes]]
+id = "viewer"
+title = "glow"
+placement = "split"
+command = ["sh", "-c", "exec python3 \"$HERDR_PLUGIN_ROOT/scripts/glowp.py\" viewer"]
+
+[[actions]]
+id = "open-link"
+title = "glow preview: open clicked markdown"
+command = ["python3", "scripts/glowp.py", "link"]
+
+[[actions]]
+id = "toggle-view"
+title = "glow preview: 렌더링/원문 전환"
+contexts = ["pane"]
+command = ["python3", "scripts/glowp.py", "toggle"]
+
+[[link_handlers]]
+id = "markdown"
+title = "Open in glow preview"
+pattern = '(?i)[^\s]*\.(md|markdown)\b(:\d+){0,2}'
+action = "open-link"
+
+[[link_handlers]]
+id = "source"
+title = "Open in glow preview (source)"
+pattern = '[^\s]*\.(py|java|kt|kts|ts|tsx|js|jsx|go|rs|sh|sql|ya?ml|toml|json|xml|gradle|rb|swift|c|h|cpp|hpp)\b(:\d+){0,2}'
+action = "open-link"
+
+[[link_handlers]]
+id = "jira"
+title = "Open Jira issue in glow preview"
+pattern = 'https://[^/\s]+\.atlassian\.net/browse/[A-Z][A-Z0-9]+-\d+'
+action = "open-link"
+
+[[link_handlers]]
+id = "confluence"
+title = "Open Confluence page in glow preview"
+pattern = 'https://[^/\s]+\.atlassian\.net/wiki/\S+'
+action = "open-link"
+
+[[link_handlers]]
+id = "github-pr"
+title = "Open GitHub PR in glow preview"
+pattern = 'https://github\.com/[^/\s]+/[^/\s]+/pull/\d+'
+action = "open-link"

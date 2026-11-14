@@ -14,6 +14,18 @@
 | [`herdr-parallel-worktree`](skills/herdr-parallel-worktree/SKILL.md) | herdr 안에서 코딩 작업을 눈에 보이는 작업자에게 맡깁니다. 작업마다 git worktree와 `claude` 작업자를 하나씩 띄워, 사이드바에서 각각의 진행을 보고 직접 들어가 볼 수 있습니다. 작업자는 그 저장소의 스페이스 밑에 작업 이름의 workspace로 붙습니다. herdr에 그 저장소의 스페이스가 없으면 지금 스페이스의 탭으로 뜨고, 새 최상위 스페이스는 만들지 않습니다. PR 전에 직접 리뷰할 티켓 한 건에도, 여러 작업을 병렬로 돌릴 때에도 쓰며, herdr 플러그인이 만든 탭은 그대로 둡니다. 작업자 지시서는 바꿀 수 있는 템플릿으로 만들고, 설정은 기본값으로 바로 동작하고, 처음 실행할 때 바꿀 수 있는 설정을 안내합니다. 끝난 작업자는 정리했다가 나중에 이름으로 다시 열 수 있으며, 대화 내용도 그대로 이어집니다. |
 <!-- skills:end -->
 
+## herdr 플러그인
+
+herdr 자체의 플러그인입니다. Claude Code가 아니라 `herdr plugin install`로 설치합니다.
+
+| 플러그인 | 설명 |
+|---|---|
+| [`glow-preview`](herdr-plugins/glow-preview/README.ko.md) | Claude Code pane에 보이는 마크다운·소스 경로나 Jira·Confluence·GitHub PR 링크를 클릭하면 오른쪽 pane에서 읽을 수 있습니다. 마크다운은 glow로 렌더링하고(bat 원문으로 전환 가능), 소스는 bat으로 보여 줍니다. 링크는 acli·jira-cli·cme·gh로 가져오고, 모두 안 되면 마지막으로 Atlassian MCP를 씁니다. 클릭하지 않으면 아무것도 열지 않습니다. |
+
+```sh
+herdr plugin install nyjin/herdr-skills/herdr-plugins/glow-preview
+```
+
 ## 설치
 
 아래 두 방법 중 **하나만** 쓰세요. 플러그인으로 설치한 스킬은 `/herdr-skills:<skill>`, 개별로 설치한 스킬은 `/<skill>` 이름으로 등록되고 서로 덮어쓰지 않습니다. 그래서 같은 스킬을 양쪽으로 설치하면 두 벌이 남아 두 번 트리거됩니다. 개별 설치로 옮기려면 먼저 `/plugin uninstall herdr-skills@herdr-skills`로 플러그인을 지우세요.
