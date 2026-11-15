@@ -132,7 +132,7 @@ pub fn mac::clipboard::copy_png(path: &Path) -> io::Result<()>;
 pub fn mac::watch::watch(path: &Path, on_change: impl Fn() + Send + 'static) -> io::Result<mac::watch::Watcher>;
 ```
 
-- [ ] **Step 1: Write `tests/skeleton.rs`**: `fn every_action_has_a_bar_item_or_key()` asserts each of `link::ACTIONS` is the `action` of a `term::bar_items()` entry or one of `toggle`, `find`, `back`; `fn binary_prints_usage()` runs `env!("CARGO_BIN_EXE_peek")` with no arguments and asserts exit code 2 and `Usage: peek` on stderr.
+- [ ] **Step 1: Write `tests/skeleton.rs`**: `fn every_action_has_a_bar_item_or_key()` asserts each of `link::ACTIONS` is the `action` of a `term::bar_items()` entry or one of `zoom-reset`, `back` (keys only); `fn binary_prints_usage()` runs `env!("CARGO_BIN_EXE_peek")` with no arguments and asserts exit code 2 and `Usage: peek` on stderr.
 - [ ] **Step 2: Run `cargo test` in `herdr-plugins/peek`.** Expected: FAIL (no crate).
 - [ ] **Step 3: Create the crate.** `Cargo.toml` with every dependency above (macOS ones under `[target.'cfg(target_os = "macos")'.dependencies]`, `notify` with its default FSEvents backend), `[profile.release] lto = true, strip = true`. Stub bodies return empty values or `Err(io::ErrorKind::Unsupported)`; `term::bar_items()` and `link::ACTIONS` are real. `main.rs` dispatches `link`, `action <name>`, `viewer`, `auth ...`; anything else prints `Usage: peek link | action <name> | viewer | auth atlassian <site> | auth github` and exits 2.
 - [ ] **Step 4: `bin/peek` launcher** (sh): `exec "$(dirname "$0")/../target/release/peek" "$@"` if it exists, else print `peek is not built: run cargo build --release in <plugin dir>` and exit 1.

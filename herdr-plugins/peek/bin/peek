@@ -1,0 +1,8 @@
+#!/bin/sh
+# Runs the peek binary built in this checkout. (A release download is future work.)
+dir=$(cd "$(dirname "$0")/.." && pwd)
+if [ -x "$dir/target/release/peek" ]; then
+  exec "$dir/target/release/peek" "$@"
+fi
+echo "peek is not built: run cargo build --release in $dir" >&2
+exit 1
