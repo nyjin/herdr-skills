@@ -1,6 +1,8 @@
 //! File change events (FSEvents through `notify`) for the shown file: its folder is watched (editors and Claude
 //! often save by writing a new file and renaming it over the old one), events are filtered to the file's name,
-//! and `on_change` runs once things have been quiet for 300 ms.
+//! and `on_change` runs once things have been quiet for 300 ms and the file really differs (modification time
+//! or size; a removed file counts). Events alone are not enough: FSEvents can deliver one for a write made just
+//! before the watch started.
 use notify::{RecursiveMode, Watcher as _};
 use std::io;
 use std::path::Path;
@@ -22,6 +24,12 @@ impl Drop for Watcher {
     }
 }
 
+/// Modification time and size; `None` when the file is gone.
+fn signature(path: &Path) -> Option<(std::time::SystemTime, u64)> {
+    let m = std::fs::metadata(path).ok()?;
+    Some((m.modified().ok()?, m.len()))
+}
+
 pub fn watch(path: &Path, on_change: impl Fn() + Send + 'static) -> io::Result<Watcher> {
     let name = path.file_name().ok_or_else(|| io::Error::other("no file name"))?.to_os_string();
     let dir = path.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new(".")).to_path_buf();
@@ -38,6 +46,8 @@ pub fn watch(path: &Path, on_change: impl Fn() + Send + 'static) -> io::Result<W
     inner.watch(&dir, RecursiveMode::NonRecursive).map_err(io::Error::other)?;
     let stop = Arc::new(AtomicBool::new(false));
     let stopped = stop.clone();
+    let file = path.to_path_buf();
+    let mut known = signature(&file);
     std::thread::spawn(move || {
         while !stopped.load(Ordering::SeqCst) {
             std::thread::sleep(Duration::from_millis(50));
@@ -52,7 +62,11 @@ pub fn watch(path: &Path, on_change: impl Fn() + Send + 'static) -> io::Result<W
                 }
             };
             if due {
-                on_change();
+                let now = signature(&file);
+                if now != known {
+                    known = now;
+                    on_change();
+                }
             }
         }
     });
