@@ -245,8 +245,8 @@ fn html_file_keeps_its_own_page() {
     let base = page.find(&format!(r#"<base href="{}">"#, folder_url(&folder))).unwrap();
     assert!(head < base && base < page.find("<link").unwrap(), "{page}");
     assert!(page.contains(r#"<link rel="stylesheet" href="s.css">"#));
-    // Linked stylesheets of the file still load: no CSP of ours.
-    assert!(!page.contains("Content-Security-Policy"));
+    // Linked stylesheets of the file still load: our CSP for HTML files only stops scripts and plugins.
+    assert!(!page.contains("default-src"));
 
     // A file with its own base keeps it.
     let own_base = b"<html><head><base href=\"https://x.org/\"></head></html>";
@@ -281,5 +281,18 @@ fn missing_file_is_an_error() {
     let t = tempfile::tempdir().unwrap();
     for name in ["gone.md", "gone.rs", "gone.png"] {
         assert!(build(&Doc::File(t.path().join(name)), &rendered()).is_err(), "{name}");
+    }
+}
+
+#[test]
+fn html_file_blocks_scripts_but_keeps_its_styles() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("report.html");
+    std::fs::write(&file, "<!doctype html><html><head><link rel=\"stylesheet\" href=\"style.css\"></head><body><script>x()</script>hi</body></html>").unwrap();
+    let opts = peek::page::PageOptions { dark: true, font_px: 14.0, mode: peek::state::Mode::Rendered, line: None };
+    for page in [peek::page::build(&peek::page::Doc::File(file.clone()), &opts).unwrap(), peek::page::browser_page(&peek::page::Doc::File(file.clone()), &opts).unwrap()] {
+        assert!(page.contains("script-src 'none'; object-src 'none'"), "{page}");
+        assert!(!page.contains("default-src 'none'")); // its own stylesheet must still load
+        assert!(page.contains("style.css"));
     }
 }

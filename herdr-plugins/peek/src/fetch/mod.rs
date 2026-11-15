@@ -58,7 +58,7 @@ impl Default for Endpoints {
 
 /// The page content for a link target; the cached copy unless `fresh`.
 pub fn fetch(target: &Target, tokens: &dyn TokenStore, cache: &Path, fresh: bool, ep: &Endpoints) -> Result<Fetched, FetchError> {
-    let url = web_url(target)
+    let url = target.url()
         .ok_or_else(|| FetchError::Other(format!("{} is not a Jira, Confluence or GitHub PR link.", name(target))))?;
     if !fresh {
         if let Some(page) = cache::load(cache, &url) {
@@ -116,7 +116,7 @@ pub fn error_page(err: &FetchError, target: &Target) -> Fetched {
         ),
         FetchError::Other(msg) => (msg.clone(), "Press <kbd>r</kbd> to try again.".to_string()),
     };
-    let url = web_url(target).unwrap_or_default();
+    let url = target.url().unwrap_or_default();
     let mut html = format!("<p>{}</p>\n<p>{fix}</p>\n", esc(&cause));
     if !url.is_empty() {
         let u = esc(&url);
@@ -162,15 +162,6 @@ pub fn run_auth(args: &[String], tokens: &dyn TokenStore) -> io::Result<()> {
 // ---- targets ----------------------------------------------------------------------------------
 
 /// The link's web address (what `o` opens and what the cache is keyed by).
-fn web_url(target: &Target) -> Option<String> {
-    match target {
-        Target::Jira { site, key } => Some(format!("{}/browse/{key}", site.trim_end_matches('/'))),
-        Target::Confluence { url, .. } => Some(url.clone()),
-        Target::GithubPr { repo, number } => Some(format!("https://github.com/{repo}/pull/{number}")),
-        Target::Path { .. } => None,
-    }
-}
-
 fn name(target: &Target) -> String {
     match target {
         Target::Jira { key, .. } => key.clone(),

@@ -329,6 +329,8 @@ fn absolutize(r: &str, base: &str) -> String {
 /// An HTML file as it is (its own styles, no CSP of ours), with what the viewer needs added at the top of its head:
 /// the charset (the text was read as UTF-8), the document folder as base, and the find styles. A browser gets
 /// absolute references instead of the base.
+const HTML_FILE_CSP: &str = r#"<meta http-equiv="Content-Security-Policy" content="script-src 'none'; object-src 'none'">"#;
+
 fn html_file_page(text: &str, folder: &str, opts: &PageOptions, absolute: bool) -> String {
     static HAS_BASE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)<base[\s>]").unwrap());
     static HEAD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)<head(\s[^>]*)?>").unwrap());
@@ -343,6 +345,9 @@ fn html_file_page(text: &str, folder: &str, opts: &PageOptions, absolute: bool) 
         }
         (text.to_string(), add)
     };
+    // An HTML file keeps its own stylesheets, images and fonts from anywhere; scripts and plugins never run, also in
+    // the copy opened in a browser.
+    add.push_str(HTML_FILE_CSP);
     if !absolute {
         write!(add, "<style>\n{}</style>", find_css(palette(opts.dark))).unwrap();
     }

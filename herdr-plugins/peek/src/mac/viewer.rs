@@ -61,6 +61,7 @@ struct Viewer {
     history: Vec<(Item, Mode, u64)>,
     keep_top: Option<u64>,
     watcher: Option<super::watch::Watcher>,
+    loaded_at: f64,
     seq: u128,
     hover: Option<usize>,
     bar: Vec<(u16, u16)>,
@@ -136,6 +137,7 @@ pub fn run(source: &str, path: Option<&Path>) -> io::Result<()> {
             history: Vec::new(),
             keep_top: None,
             watcher: None,
+            loaded_at: 0.0,
             seq: 0,
             hover: None,
             bar: Vec::new(),
@@ -331,6 +333,7 @@ fn load_page(html: String) {
             with(|v| {
                 v.doc_h = info.doc_h;
                 v.loaded = true;
+                v.loaded_at = now_ms();
                 v.generation += 1;
                 v.ready.clear();
                 v.view_top = v.keep_top.take().unwrap_or((info.top_hint * v.dpr / v.g.cell_h as f64) as u64);
@@ -614,6 +617,16 @@ fn run_find() {
         invalidate();
         draw_bar();
         draw(t0);
+        // WebKit paints highlights set in the first half second after a load only later: capture again then.
+        let (since, marker) = with(|w| (now_ms() - w.loaded_at, w.marker));
+        if since < 700.0 {
+            after((700.0 - since) as u64, move || {
+                if with(|w| w.marker == marker && w.find.is_some()) {
+                    invalidate();
+                    draw(now_ms());
+                }
+            });
+        }
     });
 }
 
@@ -741,6 +754,9 @@ fn click(x_px: u32, y_px: u32) {
 }
 
 fn follow(href: &str) {
+    if let Some(frag) = href.strip_prefix('#') {
+        return scroll_to_anchor(frag);
+    }
     if href.starts_with("http://") || href.starts_with("https://") || href.starts_with("mailto:") {
         let _ = std::process::Command::new("open").arg(href).spawn();
         return;
@@ -753,14 +769,7 @@ fn follow(href: &str) {
     let path = PathBuf::from(path);
     let same_doc = with(|v| v.item.as_ref().and_then(|i| i.path.as_ref()).and_then(|p| p.parent()) == Some(path.as_path()) || v.item.as_ref().and_then(|i| i.path.as_ref()) == Some(&path));
     if let (Some(frag), true) = (fragment.as_ref(), same_doc || path.is_dir()) {
-        let r = with(|v| v.r.clone());
-        let js = format!("(() => {{ const e = document.getElementById({}); return JSON.stringify(e ? e.getBoundingClientRect().top + window.scrollY : -1); }})()", serde_json::to_string(frag).unwrap());
-        return r.eval(&js, |y| {
-            if let Some(y) = y.and_then(|y| y.parse::<f64>().ok()).filter(|y| *y >= 0.0) {
-                with(|v| v.view_top = (y * v.dpr / v.g.cell_h as f64) as u64);
-                draw(now_ms());
-            }
-        });
+        return scroll_to_anchor(frag);
     }
     if path.is_file() {
         let (item, mode, top) = with(|v| (v.item.clone(), v.mode, v.view_top));
@@ -769,6 +778,19 @@ fn follow(href: &str) {
         }
         open(Item { label: path.display().to_string(), path: Some(path), url: None, line: None }, Mode::Rendered, None);
     }
+}
+
+/// Scroll to the element with id `frag` in the shown page.
+fn scroll_to_anchor(frag: &str) {
+    let r = with(|v| v.r.clone());
+    let id = serde_json::to_string(&percent_decode(frag)).unwrap();
+    let js = format!("(() => {{ const e = document.getElementById({id}); return JSON.stringify(e ? e.getBoundingClientRect().top + window.scrollY : -1); }})()");
+    r.eval(&js, |y| {
+        if let Some(y) = y.and_then(|y| y.parse::<f64>().ok()).filter(|y| *y >= 0.0) {
+            with(|v| v.view_top = (y * v.dpr / v.g.cell_h as f64) as u64);
+            draw(now_ms());
+        }
+    });
 }
 
 fn percent_decode(s: &str) -> String {
@@ -954,8 +976,9 @@ fn follow_state(source: String) {
         loop {
             if let Some(st) = state::read_state(&source) {
                 if last != Some(st.seq) {
+                    let first = last.is_none();
                     last = Some(st.seq);
-                    DispatchQueue::main().exec_async(move || on_state(st));
+                    DispatchQueue::main().exec_async(move || on_state(st, first));
                 }
             }
             std::thread::sleep(Duration::from_millis(150));
@@ -963,10 +986,14 @@ fn follow_state(source: String) {
     });
 }
 
-fn on_state(st: ViewState) {
+/// A new state: run its command, or show its items. On the viewer's first read a command is skipped: it was
+/// meant for an earlier viewer.
+fn on_state(st: ViewState, first: bool) {
     with(|v| v.seq = st.seq);
     if let Some(cmd) = st.command.as_deref() {
-        return act(cmd);
+        if !first {
+            return act(cmd);
+        }
     }
     match st.items.len() {
         0 => {}
