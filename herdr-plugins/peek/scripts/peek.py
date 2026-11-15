@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""glow-preview: show markdown, source files and Jira/Confluence/PR links beside a Claude Code pane.
+"""peek: show markdown, source files and Jira/Confluence/PR links beside a Claude Code pane.
 
-  glowp.py link     herdr link handler action ($HERDR_PLUGIN_CLICKED_URL, $HERDR_PANE_ID).
-  glowp.py toggle   herdr action: flip rendered/source for the viewer it was run from.
-  glowp.py viewer   the plugin pane: follows <state>/<$GLOWP_SOURCE>.json and shows it in less.
+  peek.py link     herdr link handler action ($HERDR_PLUGIN_CLICKED_URL, $HERDR_PANE_ID).
+  peek.py toggle   herdr action: flip rendered/source for the viewer it was run from.
+  peek.py viewer   the plugin pane: follows <state>/<$PEEK_SOURCE>.json and shows it in less.
 
 Nothing opens without a click: the link handler writes the state file and opens the viewer pane
 when the source pane has none. The viewer renders with glow (markdown) or bat (source, or markdown as source) into a
@@ -26,13 +26,13 @@ import fetch  # noqa: E402
 import resolve  # noqa: E402
 import targets  # noqa: E402
 
-PLUGIN_ID = "nyjin.glow-preview"
+PLUGIN_ID = "nyjin.peek"
 # Appended, not prepended: the user's own wrappers (e.g. a gh that picks the account per repo) must win.
 os.environ["PATH"] = os.environ.get("PATH", "") + ":/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 
 
 def herdr_cmd():
-    return shlex.split(os.environ.get("GLOWP_HERDR") or os.environ.get("HERDR_BIN_PATH") or "herdr")
+    return shlex.split(os.environ.get("PEEK_HERDR") or os.environ.get("HERDR_BIN_PATH") or "herdr")
 
 
 def herdr(*args):
@@ -45,13 +45,13 @@ def herdr_json(*args):
 
 
 def notify(body):
-    herdr("notification", "show", "glow-preview", "--body", body)
+    herdr("notification", "show", "peek", "--body", body)
 
 
 def state_dir():
     # Fixed on purpose: herdr gives plugin panes their own HERDR_PLUGIN_STATE_DIR, but the Claude Code
     # hook runs outside herdr's plugin runner, and both sides must meet in one folder.
-    return os.environ.get("GLOWP_STATE_DIR") or os.path.expanduser("~/.local/state/glow-preview")
+    return os.environ.get("PEEK_STATE_DIR") or os.path.expanduser("~/.local/state/peek")
 
 
 def state_file(source, ext):
@@ -115,7 +115,7 @@ def show(source, items):
             return
         r = herdr("plugin", "pane", "open", "--plugin", PLUGIN_ID, "--entrypoint", "viewer",
                   "--placement", "split", "--target-pane", source, "--direction", "right",
-                  "--no-focus", "--env", f"GLOWP_SOURCE={source}")
+                  "--no-focus", "--env", f"PEEK_SOURCE={source}")
         # Record the new pane now, not when the viewer process starts, so a hook right behind
         # this one sees it and does not open a second viewer.
         try:
@@ -136,7 +136,7 @@ def cmd_link():
     t = targets.classify(text)
     if t["kind"] == "path" and t["text"].startswith(("http://", "https://")):
         # A web URL that only looked like a file (…/blob/main/README.md): keep the default and open it.
-        subprocess.run([os.environ.get("GLOWP_OPEN", "open"), t["text"]])
+        subprocess.run([os.environ.get("PEEK_OPEN", "open"), t["text"]])
         return 0
     if t["kind"] != "path":
         show(source, [{"url": t["url"]}])
@@ -147,7 +147,7 @@ def cmd_link():
         home=os.path.expanduser("~"), tmp_root=f"/private/tmp/claude-{os.getuid()}",
         projects_root=os.path.expanduser("~/.claude/projects"))
     if not found:
-        notify(f"파일을 찾지 못했습니다: {t['text']}")
+        notify(f"File not found: {t['text']}")
         return 0
     show(source, [{"path": p, "line": t["line"]} for p in found])
     return 0
@@ -198,12 +198,12 @@ def ensure_tool(cmd, formula):
     if shutil.which(cmd):
         return True
     if not shutil.which("brew"):
-        print(f"{cmd}가 없습니다. 설치한 뒤 r 을 누르세요.")
+        print(f"{cmd} is not installed. Install it, then press r.")
         return False
-    notify(f"{cmd}가 없어 설치합니다 (brew install {formula}).")
-    print(f"{cmd}가 없어 설치합니다: brew install {formula}\n")
+    notify(f"{cmd} is missing; installing it (brew install {formula}).")
+    print(f"{cmd} is missing; installing it: brew install {formula}\n")
     ok = subprocess.run(["brew", "install", formula]).returncode == 0 and shutil.which(cmd)
-    notify(f"{cmd} 설치를 마쳤습니다." if ok else f"{cmd} 설치에 실패했습니다. 뷰어 pane의 출력을 확인하세요.")
+    notify(f"{cmd} is installed." if ok else f"Installing {cmd} failed. See the viewer pane's output.")
     return bool(ok)
 
 
@@ -235,14 +235,14 @@ BAT_HEADER_LINES = 1  # bat's header-filename line above line 1
 def less_prompt(label):
     """less's prompt names the rendered temp file by default; show what is being viewed instead."""
     esc = "".join("\\" + c if c in "?:.%\\" else c for c in label)
-    return f"-Ps{esc} · q 메뉴$"
+    return f"-Ps{esc} · q menu$"
 
 
 def render(path, mode, line, width, label):
     """Render to an ANSI file for less. Returns (file, less arguments)."""
     out = os.path.join(state_dir(), f"render-{os.getpid()}.ansi")
     if is_markdown(path) and mode == "rendered":
-        cmd = ["glow", "-s", os.environ.get("GLOWP_STYLE", "auto"), "-w", str(width), path]
+        cmd = ["glow", "-s", os.environ.get("PEEK_STYLE", "auto"), "-w", str(width), path]
     else:
         cmd = ["bat", "--color=always", "--paging=never", "--style=numbers,header-filename",
                f"--terminal-width={width + 2}", path]
@@ -288,7 +288,7 @@ def load(source, seq, item, refresh):
     cache = fetch.cache_path(url)
     if refresh or not os.path.exists(cache):
         reset_terminal()
-        print(f"가져오는 중…\n{url}")
+        print(f"Fetching…\n{url}")
         md, ok, tool = fetch.fetch_markdown(url)
         if changed(source, seq):
             return None
@@ -303,14 +303,14 @@ def load(source, seq, item, refresh):
     except OSError:
         tool = "?"
     when = time.strftime("%m-%d %H:%M", time.localtime(os.path.getmtime(cache)))
-    return cache, True, f"{url} · {tool} · 가져온 시각 {when}"
+    return cache, True, f"{url} · {tool} · fetched {when}"
 
 
 def pick(source, seq, items):
-    print("같은 이름의 파일이 여러 개입니다. 번호를 고르세요 (최근에 다룬 파일이 위):\n")
+    print("Several files have this name. Pick a number (most recently used first):\n")
     for i, it in enumerate(items[:9], 1):
         print(f"  {i}. {it['path'].replace(os.path.expanduser('~'), '~', 1)}")
-    print("\n  q. 닫기")
+    print("\n  q. close")
     key = wait_key(source, seq, "q" + "".join(str(i) for i in range(1, min(len(items), 9) + 1)))
     if key is None or key == "q":
         return key
@@ -318,22 +318,22 @@ def pick(source, seq, items):
 
 
 def menu(item, path, ok, is_md):
-    keys = [("r", "다시 보기")]
+    keys = [("r", "show again")]
     if is_md:
-        keys.append(("s", "렌더링/원문 전환"))
+        keys.append(("s", "rendered/source"))
     if "url" in item:
-        keys.append(("f", "새로 가져오기"))
-        keys.append(("o", "브라우저로 열기"))
-    keys.append(("q", "닫기"))
+        keys.append(("f", "fetch again"))
+        keys.append(("o", "open in browser"))
+    keys.append(("q", "close"))
     print(f"{item.get('url') or path}\n\n  " + " · ".join(f"{k} {label}" for k, label in keys))
     return "".join(k for k, _ in keys)
 
 
 def cmd_viewer():
-    source = os.environ.get("GLOWP_SOURCE")
+    source = os.environ.get("PEEK_SOURCE")
     me = os.environ.get("HERDR_PANE_ID", "")
     if not source:
-        print("GLOWP_SOURCE가 없습니다.")
+        print("PEEK_SOURCE is not set.")
         return 1
     write_atomic(state_file(source, ".viewer"), me)
     try:
@@ -347,7 +347,7 @@ def cmd_viewer():
             seq, items = st.get("seq"), st.get("items") or []
             reset_terminal()
             if not items:
-                print("Claude pane에서 파일 경로나 링크를 클릭하면 여기에 보여 줍니다.  q 닫기")
+                print("Click a file path or link in the Claude pane to show it here.  q close")
                 if wait_key(source, seq, "q") == "q":
                     return 0
                 st, chosen = read_state(source) or {}, None

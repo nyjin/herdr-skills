@@ -38,7 +38,7 @@ class FetchTest(unittest.TestCase):
             os.symlink(os.path.join(HERE, "fake_cli.py"), os.path.join(self.bin, name))
         self.log = os.path.join(self.tmp.name, "log")
         self.env = mock.patch.dict(os.environ, {"PATH": f"{self.bin}:/usr/bin:/bin", "FAKE_LOG": self.log,
-                                                "FAKE_MODE": "ok", "GLOWP_CACHE_DIR": self.tmp.name})
+                                                "FAKE_MODE": "ok", "PEEK_CACHE_DIR": self.tmp.name})
         self.env.start()
         for k in [k for k in os.environ if k.startswith("FAKE_MODE_")] + ["GH_TOKEN"]:
             os.environ.pop(k, None)
@@ -63,7 +63,9 @@ class FetchTest(unittest.TestCase):
     def test_jira_acli_first(self):
         md, ok, used = fetch.fetch_markdown(JIRA)
         self.assertEqual((ok, used), (True, "acli"))
-        for s in ["# ABC-1 요약 제목", "진행 중", "홍길동", "본문 내용", "## 코멘트", "박영희", "코멘트 하나"]:
+        # The comment is Korean in fake_cli.py on purpose: non-ASCII text must come through unchanged.
+        for s in ["# ABC-1 Issue summary", "In Progress", "Jane Doe", "Body text", "## Comments", "Ann Lee",
+                  "코멘트 하나"]:
             self.assertIn(s, md)
         self.assertEqual(self.tools_called(), ["acli"])
 
@@ -72,7 +74,7 @@ class FetchTest(unittest.TestCase):
         md, ok, used = fetch.fetch_markdown(JIRA)
         self.assertEqual((ok, used), (True, "jira-cli"))
         self.assertIn(["jira", "issue", "view", "ABC-1", "--raw"], self.calls())
-        self.assertIn("# ABC-1 요약 제목", md)
+        self.assertIn("# ABC-1 Issue summary", md)
 
     def test_jira_skips_missing_tools_to_mcp(self):
         self.uninstall("acli", "jira")
@@ -86,7 +88,7 @@ class FetchTest(unittest.TestCase):
     def test_confluence_cme(self):
         md, ok, used = fetch.fetch_markdown(CONF)
         self.assertEqual((ok, used), (True, "cme"))
-        self.assertIn("# 페이지 제목", md)
+        self.assertIn("# Page title", md)
         self.assertIn(CONF, md)
         self.assertEqual(self.calls()[0][:2], ["cme", "pages"])
         self.assertIn("Parent\n", md)  # breadcrumb link to ../Parent.md keeps its text only
@@ -102,8 +104,8 @@ class FetchTest(unittest.TestCase):
         self.uninstall("acli", "jira", "claude")
         md, ok, used = fetch.fetch_markdown(JIRA)
         self.assertEqual((ok, used), (False, None))
-        self.assertIn("설치되어 있지 않습니다", md)
-        for s in ["brew install acli", "jira-cli/jira-cli", "Atlassian 커넥터"]:
+        self.assertIn("None of the tools for this link is installed", md)
+        for s in ["brew install acli", "jira-cli/jira-cli", "Atlassian connector"]:
             self.assertIn(s, md)
         self.uninstall("cme")
         md, _, _ = fetch.fetch_markdown(CONF)
@@ -113,7 +115,7 @@ class FetchTest(unittest.TestCase):
         os.environ["FAKE_MODE"] = "auth"
         md, ok, _ = fetch.fetch_markdown(JIRA)
         self.assertFalse(ok)
-        for s in ["| acli | 로그인 필요 | `acli jira auth login` |", "| jira-cli | 로그인 필요", "| Atlassian MCP |"]:
+        for s in ["| acli | login needed | `acli jira auth login` |", "| jira-cli | login needed", "| Atlassian MCP |"]:
             self.assertIn(s, md)
 
     def test_pr_ok(self):
@@ -121,8 +123,8 @@ class FetchTest(unittest.TestCase):
         self.assertEqual((ok, used), (True, "gh"))
         view = next(c for c in self.calls() if c[1:3] == ["pr", "view"])
         self.assertEqual(view[view.index("-R") + 1], "o/r")
-        for s in ["# PR 제목 (#7)", "OPEN", "alice", "PR 설명", "rev", "APPROVED", "좋아요",
-                  "src/a.py:12", "여기 이름이 어색해요", "일반 코멘트", "src/a.py (+3/-1)"]:
+        for s in ["# PR title (#7)", "OPEN", "alice", "PR description", "rev", "APPROVED", "Looks good",
+                  "src/a.py:12", "This name reads oddly", "A general comment", "src/a.py (+3/-1)"]:
             self.assertIn(s, md)
 
     def test_pr_notfound_guides(self):
@@ -140,7 +142,7 @@ class FetchTest(unittest.TestCase):
         os.environ["FAKE_MODE"] = "api404first"
         md, ok, _ = fetch.fetch_markdown(PR)
         self.assertTrue(ok)
-        self.assertIn("여기 이름이 어색해요", md)
+        self.assertIn("This name reads oddly", md)
         self.assertIn(["gh", "auth", "token", "--user", "b"], self.calls())
 
     def test_cache_path(self):

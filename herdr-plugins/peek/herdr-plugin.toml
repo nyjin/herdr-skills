@@ -1,54 +1,54 @@
-id = "nyjin.glow-preview"
-name = "glow preview"
-version = "0.3.0"
+id = "nyjin.peek"
+name = "peek"
+version = "0.4.0"
 min_herdr_version = "0.9.3"
-description = "Claude Code 옆 pane에 마크다운(glow)·소스(bat)·Jira/Confluence/PR 링크 내용을 보여 준다"
+description = "Click a path or a Jira, Confluence or GitHub PR link in a Claude Code pane to read it in the pane beside it: markdown with glow, source with bat"
 platforms = ["macos"]
 
 # The viewer runs from the plugin root by absolute path: the pane's cwd is the source pane's folder.
 [[panes]]
 id = "viewer"
-title = "glow"
+title = "peek"
 placement = "split"
-command = ["sh", "-c", "exec python3 \"$HERDR_PLUGIN_ROOT/scripts/glowp.py\" viewer"]
+command = ["sh", "-c", "exec python3 \"$HERDR_PLUGIN_ROOT/scripts/peek.py\" viewer"]
 
 [[actions]]
 id = "open-link"
-title = "glow preview: open clicked markdown"
-command = ["python3", "scripts/glowp.py", "link"]
+title = "peek: open the clicked path or link"
+command = ["python3", "scripts/peek.py", "link"]
 
 [[actions]]
 id = "toggle-view"
-title = "glow preview: 렌더링/원문 전환"
+title = "peek: toggle rendered/source"
 contexts = ["pane"]
-command = ["python3", "scripts/glowp.py", "toggle"]
+command = ["python3", "scripts/peek.py", "toggle"]
 
 [[link_handlers]]
 id = "markdown"
-title = "Open in glow preview"
+title = "Open in peek"
 pattern = '(?i)[^\s]*\.(md|markdown)\b(:\d+){0,2}'
 action = "open-link"
 
 [[link_handlers]]
 id = "source"
-title = "Open in glow preview (source)"
+title = "Open in peek (source)"
 pattern = '[^\s]*\.(py|java|kt|kts|ts|tsx|js|jsx|go|rs|sh|sql|ya?ml|toml|json|xml|gradle|rb|swift|c|h|cpp|hpp)\b(:\d+){0,2}'
 action = "open-link"
 
 [[link_handlers]]
 id = "jira"
-title = "Open Jira issue in glow preview"
+title = "Open Jira issue in peek"
 pattern = 'https://[^/\s]+\.atlassian\.net/browse/[A-Z][A-Z0-9]+-\d+'
 action = "open-link"
 
 [[link_handlers]]
 id = "confluence"
-title = "Open Confluence page in glow preview"
+title = "Open Confluence page in peek"
 pattern = 'https://[^/\s]+\.atlassian\.net/wiki/\S+'
 action = "open-link"
 
 [[link_handlers]]
 id = "github-pr"
-title = "Open GitHub PR in glow preview"
+title = "Open GitHub PR in peek"
 pattern = 'https://github\.com/[^/\s]+/[^/\s]+/pull/\d+'
 action = "open-link"

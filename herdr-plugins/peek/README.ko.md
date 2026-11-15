@@ -1,4 +1,4 @@
-# glow-preview
+# peek
 
 [English](README.md) | **한국어**
 
@@ -43,27 +43,31 @@ gh는 PR을 `gh pr view <n> -R <o>/<r>`로 가져온다. 저장소별로 계정�
 - `o` 브라우저로 열기 (링크)
 - `q` 뷰어 닫기
 
-렌더링/원문 전환은 herdr 액션 **glow preview: 렌더링/원문 전환**으로도 할 수 있다. 뷰어 pane이나 Claude pane에 포커스를 둔 채 실행하면 된다. 단축키로 쓰려면 `~/.config/herdr/config.toml`에 아래를 추가한다. 이 형식은 `herdr config check`로 검사를 통과했다.
+렌더링/원문 전환은 herdr 액션 **peek: toggle rendered/source**로도 할 수 있다. 뷰어 pane이나 Claude pane에 포커스를 둔 채 실행하면 된다. 단축키로 쓰려면 `~/.config/herdr/config.toml`에 아래를 추가한다. 이 형식은 `herdr config check`로 검사를 통과했다.
 
 ```toml
 [[keys.command]]
 key = "prefix+v"
 type = "plugin_action"
-command = "nyjin.glow-preview:toggle-view"
+command = "nyjin.peek:toggle-view"
 ```
 
 ## 설치 / 제거
 
 ```sh
-herdr plugin install nyjin/herdr-skills/herdr-plugins/glow-preview   # 설치
-herdr plugin uninstall nyjin.glow-preview                            # 제거
+herdr plugin install nyjin/herdr-skills/herdr-plugins/peek   # 설치
+herdr plugin uninstall nyjin.peek                            # 제거
 ```
 
-이 저장소를 받아 둔 곳에서 바로 쓰려면 `sh herdr-plugins/glow-preview/install.sh`를 실행한다. 이 스크립트는 `herdr plugin link`로 붙이고, 0.1~0.2 버전이 남긴 Claude Code 훅이 있으면 `~/.claude/settings.json`을 백업한 뒤 지운다.
+이 저장소를 받아 둔 곳에서 바로 쓰려면 `herdr plugin link herdr-plugins/peek`으로 붙인다.
+
+0.3.0까지는 이름이 glow-preview(`nyjin.glow-preview`)였다. 그 버전을 설치해 두었다면 `herdr plugin uninstall nyjin.glow-preview`로 지운 뒤 새로 설치한다.
+
+macOS, herdr 0.9.3 이상, python3가 필요하다.
 
 ## 구조
 
-- `scripts/glowp.py`: 진입점 세 개
+- `scripts/peek.py`: 진입점 세 개
   - `link`: 링크 핸들러
   - `toggle`: 전환 액션
   - `viewer`: 플러그인 pane. 파일과 링크 모두 `load()`를 거쳐 less로 보여 준다
@@ -71,12 +75,13 @@ herdr plugin uninstall nyjin.glow-preview                            # 제거
 - `scripts/targets.py`: 클릭 문자열 → 링크 종류 또는 경로(+줄)
 - `scripts/fetch.py`: 링크 → 마크다운. 도구를 순서대로 시도하고, 모두 안 되면 안내를 만든다
 - `scripts/adf.py`: Atlassian 문서(ADF) → 마크다운. acli와 jira-cli 결과에 쓴다
-- 상태 (`~/.local/state/glow-preview/`):
+- 상태 (`~/.local/state/peek/`):
   - `<claude-pane>.json`: 보여 줄 항목
   - `.viewer`: 뷰어 pane id
   - `.mode`: 렌더링/원문
-- 캐시 (`~/.cache/glow-preview/`):
+- 캐시 (`~/.cache/peek/`):
   - `<해시>.md`: 가져온 문서
   - `.tool`: 사용한 도구
   - `.cme/`: cme 내보내기 폴더
 - 테스트: `python3 -m unittest discover -s tests`
+- 설계와 계획(glow-preview라는 이름으로 쓴 기록): `docs/superpowers/specs/2026-11-13-glow-preview-design.md`, `docs/superpowers/plans/2026-11-13-glow-preview-plan*.md`

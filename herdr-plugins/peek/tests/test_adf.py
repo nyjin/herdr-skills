@@ -28,59 +28,59 @@ def li(*blocks):
 class AdfTest(unittest.TestCase):
     def test_blocks(self):
         md = to_markdown(doc(
-            {"type": "heading", "attrs": {"level": 2}, "content": [t("제목")]},
-            p(t("첫 문단")), p(t("둘째 문단")),
+            {"type": "heading", "attrs": {"level": 2}, "content": [t("Title")]},
+            p(t("First paragraph")), p(t("Second paragraph")),
             {"type": "bulletList", "content": [
                 li(p(t("a")), {"type": "orderedList", "content": [li(p(t("a1")))]}),
                 li(p(t("b")))]},
             {"type": "codeBlock", "attrs": {"language": "sql"}, "content": [t("select 1;")]},
-            {"type": "blockquote", "content": [p(t("인용"))]},
+            {"type": "blockquote", "content": [p(t("Quote"))]},
             {"type": "rule"},
-            {"type": "panel", "attrs": {"panelType": "info"}, "content": [p(t("패널"))]},
-            {"type": "expand", "attrs": {"title": "더보기"}, "content": [p(t("숨김"))]},
+            {"type": "panel", "attrs": {"panelType": "info"}, "content": [p(t("Panel"))]},
+            {"type": "expand", "attrs": {"title": "More"}, "content": [p(t("Hidden"))]},
             {"type": "taskList", "content": [
-                {"type": "taskItem", "attrs": {"state": "TODO"}, "content": [t("할 일")]},
-                {"type": "taskItem", "attrs": {"state": "DONE"}, "content": [t("한 일")]}]},
+                {"type": "taskItem", "attrs": {"state": "TODO"}, "content": [t("To do")]},
+                {"type": "taskItem", "attrs": {"state": "DONE"}, "content": [t("Done")]}]},
             {"type": "decisionList", "content": [
-                {"type": "decisionItem", "attrs": {"state": "DECIDED"}, "content": [t("결정")]}]},
+                {"type": "decisionItem", "attrs": {"state": "DECIDED"}, "content": [t("Decision")]}]},
         ))
-        for expected in ["## 제목", "첫 문단\n\n둘째 문단", "- a\n  1. a1\n- b", "```sql\nselect 1;\n```",
-                         "> 인용", "\n---\n", "> **ℹ️** 패널", "**▸ 더보기**\n\n숨김",
-                         "- [ ] 할 일\n- [x] 한 일", "- ✔︎ 결정"]:
+        for expected in ["## Title", "First paragraph\n\nSecond paragraph", "- a\n  1. a1\n- b", "```sql\nselect 1;\n```",
+                         "> Quote", "\n---\n", "> **ℹ️** Panel", "**▸ More**\n\nHidden",
+                         "- [ ] To do\n- [x] Done", "- ✔︎ Decision"]:
             self.assertIn(expected, md)
 
     def test_inline(self):
         md = to_markdown(doc(p(
-            t("굵게", "strong"), t(" "), t("기울임", "em"), t(" "), t("코드", "code"), t(" "),
-            t("취소", "strike"), t(" "), t("링크", {"type": "link", "attrs": {"href": "https://x"}}), t(" "),
-            t("밑줄", "underline", {"type": "textColor", "attrs": {"color": "#f00"}}),
+            t("bold", "strong"), t(" "), t("italic", "em"), t(" "), t("code", "code"), t(" "),
+            t("struck", "strike"), t(" "), t("link", {"type": "link", "attrs": {"href": "https://x"}}), t(" "),
+            t("underlined", "underline", {"type": "textColor", "attrs": {"color": "#f00"}}),
             {"type": "hardBreak"},
-            {"type": "mention", "attrs": {"text": "@홍길동"}}, t(" "),
+            {"type": "mention", "attrs": {"text": "@Jane Doe"}}, t(" "),
             {"type": "inlineCard", "attrs": {"url": "https://card"}}, t(" "),
             {"type": "status", "attrs": {"text": "DONE"}}, t(" "),
             {"type": "date", "attrs": {"timestamp": "1794528000000"}}, t(" "),
             {"type": "emoji", "attrs": {"shortName": ":smile:"}}),
             {"type": "mediaSingle", "content": [{"type": "media", "attrs": {"alt": "shot.png"}}]},
         ))
-        for expected in ["**굵게**", "_기울임_", "`코드`", "~~취소~~", "[링크](https://x)", "밑줄\n",
-                         "@홍길동", "<https://card>", "`[DONE]`", "2026-11-13", ":smile:", "[첨부: shot.png]"]:
+        for expected in ["**bold**", "_italic_", "`code`", "~~struck~~", "[link](https://x)", "underlined\n",
+                         "@Jane Doe", "<https://card>", "`[DONE]`", "2026-11-13", ":smile:", "[Attachment: shot.png]"]:
             self.assertIn(expected, md)
 
     def test_table_cell_escapes(self):
         cell = lambda kind, *inl: {"type": kind, "content": [p(*inl)]}
         md = to_markdown(doc({"type": "table", "content": [
-            {"type": "tableRow", "content": [cell("tableHeader", t("이름")), cell("tableHeader", t("값"))]},
+            {"type": "tableRow", "content": [cell("tableHeader", t("Name")), cell("tableHeader", t("Value"))]},
             {"type": "tableRow", "content": [cell("tableCell", t("a|b")),
-                                             {"type": "tableCell", "content": [p(t("줄1")), p(t("줄2"))]}]},
+                                             {"type": "tableCell", "content": [p(t("line 1")), p(t("line 2"))]}]},
         ]}))
-        self.assertIn("| 이름 | 값 |\n| --- | --- |\n| a\\|b | 줄1<br>줄2 |", md)
+        self.assertIn("| Name | Value |\n| --- | --- |\n| a\\|b | line 1<br>line 2 |", md)
 
     def test_unknown_node_keeps_text(self):
         self.assertIn("abc", to_markdown(doc({"type": "mystery", "content": [t("abc")]})))
 
     def test_extension(self):
         md = to_markdown(doc({"type": "extension", "attrs": {"extensionKey": "toc"}}))
-        self.assertIn("[Confluence 매크로: toc]", md)
+        self.assertIn("[Confluence macro: toc]", md)
 
     def test_string_and_none(self):
         self.assertEqual(to_markdown(None), "")

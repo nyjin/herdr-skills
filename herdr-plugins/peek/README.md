@@ -1,4 +1,4 @@
-# glow-preview
+# peek
 
 **English** | [한국어](README.ko.md)
 
@@ -43,29 +43,31 @@ PRs are fetched with `gh pr view <n> -R <o>/<r>`, so a gh wrapper that picks the
 - `o` open in the browser (links)
 - `q` close the viewer
 
-The herdr action **glow preview: 렌더링/원문 전환** also switches rendered ↔ source, from the viewer pane or its Claude pane, even while less is open. To bind it to a key, add this to `~/.config/herdr/config.toml` (the format passes `herdr config check`):
+The herdr action **peek: toggle rendered/source** also switches rendered ↔ source, from the viewer pane or its Claude pane, even while less is open. To bind it to a key, add this to `~/.config/herdr/config.toml` (the format passes `herdr config check`):
 
 ```toml
 [[keys.command]]
 key = "prefix+v"
 type = "plugin_action"
-command = "nyjin.glow-preview:toggle-view"
+command = "nyjin.peek:toggle-view"
 ```
 
 ## Install / remove
 
 ```sh
-herdr plugin install nyjin/herdr-skills/herdr-plugins/glow-preview   # install
-herdr plugin uninstall nyjin.glow-preview                            # remove
+herdr plugin install nyjin/herdr-skills/herdr-plugins/peek   # install
+herdr plugin uninstall nyjin.peek                            # remove
 ```
 
-From a checkout of this repository, `sh herdr-plugins/glow-preview/install.sh` links the plugin with `herdr plugin link` and removes the Claude Code hook that versions 0.1–0.2 registered, after backing up `~/.claude/settings.json`.
+From a checkout of this repository, `herdr plugin link herdr-plugins/peek` links the plugin.
 
-Requires macOS, herdr 0.9.3 or later and python3. The viewer's text is in Korean.
+Up to 0.3.0 the plugin was called glow-preview (`nyjin.glow-preview`). If you installed it, remove it with `herdr plugin uninstall nyjin.glow-preview`, then install peek.
+
+Requires macOS, herdr 0.9.3 or later and python3.
 
 ## Layout
 
-- `scripts/glowp.py`: three entry points
+- `scripts/peek.py`: three entry points
   - `link`: the link handler
   - `toggle`: the switch action
   - `viewer`: the plugin pane; files and links both go through `load()` and are paged with less
@@ -73,13 +75,13 @@ Requires macOS, herdr 0.9.3 or later and python3. The viewer's text is in Korean
 - `scripts/targets.py`: clicked text → link kind, or path (+ line)
 - `scripts/fetch.py`: link → markdown, trying the tools in order and writing the guide when none works
 - `scripts/adf.py`: Atlassian Document Format → markdown, used for acli and jira-cli output
-- State (`~/.local/state/glow-preview/`):
+- State (`~/.local/state/peek/`):
   - `<claude-pane>.json`: what to show
   - `.viewer`: the viewer pane id
   - `.mode`: rendered or source
-- Cache (`~/.cache/glow-preview/`):
+- Cache (`~/.cache/peek/`):
   - `<hash>.md`: the fetched document
   - `.tool`: the tool used
   - `.cme/`: cme's export folder
 - Tests: `python3 -m unittest discover -s tests`
-- Design and plans: `docs/superpowers/specs/2026-11-13-glow-preview-design.md`, `docs/superpowers/plans/2026-11-13-glow-preview-plan*.md`
+- Design and plans (written under the name glow-preview): `docs/superpowers/specs/2026-11-13-glow-preview-design.md`, `docs/superpowers/plans/2026-11-13-glow-preview-plan*.md`

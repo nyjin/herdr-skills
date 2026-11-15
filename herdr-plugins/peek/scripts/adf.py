@@ -61,7 +61,7 @@ def _block(n, indent):
         icon = PANEL_ICON.get(attrs.get("panelType"), "ℹ️")
         return _prefix(f"**{icon}** " + _blocks(content, ""), "> ", "> ")
     if kind in ("expand", "nestedExpand"):
-        return f"**▸ {attrs.get('title') or '펼치기'}**\n\n" + _blocks(content, "")
+        return f"**▸ {attrs.get('title') or 'Expand'}**\n\n" + _blocks(content, "")
     if kind == "taskList":
         return "\n".join(_block(c, indent) for c in content)
     if kind == "taskItem":
@@ -77,7 +77,7 @@ def _block(n, indent):
     if kind in ("blockCard", "embedCard"):
         return f"<{attrs.get('url', '')}>"
     if kind in ("extension", "bodiedExtension"):
-        return f"[Confluence 매크로: {attrs.get('extensionKey', '?')}]" + (
+        return f"[Confluence macro: {attrs.get('extensionKey', '?')}]" + (
             "\n\n" + _blocks(content, "") if content else "")
     if any("text" in c for c in content):  # unknown inline container
         return _inline(content)
@@ -86,7 +86,7 @@ def _block(n, indent):
 
 def _media(n):
     a = n.get("attrs") or {}
-    return f"[첨부: {a.get('alt') or a.get('id') or '파일'}]"
+    return f"[Attachment: {a.get('alt') or a.get('id') or 'file'}]"
 
 
 def _cell(c):

@@ -29,21 +29,21 @@ MCP = "Atlassian MCP"
 MCP_PREFIXES = ("mcp__claude_ai_Atlassian__", "mcp__claude_ai_Atlassian_MCP__")
 MCP_TOOLS = {"jira": ["getJiraIssue"], "confluence": ["getConfluenceContent"]}
 INSTALL = {
-    "acli": "`brew tap atlassian/homebrew-acli && brew install acli` 후 `acli jira auth login`",
-    "jira-cli": "`brew install ankitpokhrel/jira-cli/jira-cli` 후 `jira init` (API 토큰을 `JIRA_API_TOKEN`에)",
-    "cme": "`uv tool install confluence-markdown-exporter` 후 `cme config` 에서 Confluence 인증",
-    "gh": "`brew install gh` 후 `gh auth login`",
-    MCP: "Claude Code(`claude`)를 설치하고 claude.ai에서 Atlassian 커넥터를 연결",
+    "acli": "`brew tap atlassian/homebrew-acli && brew install acli`, then `acli jira auth login`",
+    "jira-cli": "`brew install ankitpokhrel/jira-cli/jira-cli`, then `jira init` (API token in `JIRA_API_TOKEN`)",
+    "cme": "`uv tool install confluence-markdown-exporter`, then Confluence login in `cme config`",
+    "gh": "`brew install gh`, then `gh auth login`",
+    MCP: "install Claude Code (`claude`) and connect the Atlassian connector on claude.ai",
 }
 LOGIN = {
     "acli": "`acli jira auth login`",
-    "jira-cli": "`jira init` (API 토큰은 `JIRA_API_TOKEN`)",
-    "cme": "`cme config` 의 인증 설정",
-    "gh": "`gh auth login` 으로 이 저장소에 접근할 수 있는 계정 추가 (조직 SSO 승인이 필요할 수 있음)",
-    MCP: "claude.ai 설정에서 Atlassian 커넥터 연결",
+    "jira-cli": "`jira init` (API token in `JIRA_API_TOKEN`)",
+    "cme": "the login settings in `cme config`",
+    "gh": "`gh auth login` with an account that can see this repository (organization SSO approval may be needed)",
+    MCP: "connect the Atlassian connector in claude.ai settings",
 }
-REASON = {"missing": "설치 안 됨", "auth": "로그인 필요", "notfound": "없거나 볼 권한 없음",
-          "timeout": "시간 초과", "error": "오류"}
+REASON = {"missing": "not installed", "auth": "login needed", "notfound": "not found or no access",
+          "timeout": "timed out", "error": "error"}
 
 
 class Failure(Exception):
@@ -53,7 +53,7 @@ class Failure(Exception):
 
 
 def cache_path(url):
-    base = os.environ.get("GLOWP_CACHE_DIR") or os.path.expanduser("~/.cache/glow-preview")
+    base = os.environ.get("PEEK_CACHE_DIR") or os.path.expanduser("~/.cache/peek")
     return os.path.join(base, hashlib.sha1(url.encode()).hexdigest()[:12] + ".md")
 
 
@@ -64,7 +64,7 @@ def run(cmd, timeout, env=None):
     except FileNotFoundError:
         raise Failure("missing", cmd[0])
     except subprocess.TimeoutExpired:
-        raise Failure("timeout", f"{timeout}초")
+        raise Failure("timeout", f"{timeout} s")
     if r.returncode != 0:
         err = (r.stderr or r.stdout).strip()
         low = err.lower()
@@ -81,7 +81,7 @@ def run_json(cmd, timeout, env=None):
     try:
         return json.loads(run(cmd, timeout, env))
     except ValueError:
-        raise Failure("error", "CLI 출력이 JSON이 아닙니다")
+        raise Failure("error", "the CLI output is not JSON")
 
 
 def fetch_markdown(url, *, timeout=None):
@@ -112,18 +112,18 @@ def jira_markdown(d, t):
     """acli --json and jira-cli --raw both return the Jira REST issue (fields, ADF bodies)."""
     f = d.get("fields") or {}
     lines = [f"# {d.get('key', t['key'])} {f.get('summary', '')}", "",
-             f"- {_name(f.get('issuetype'), 'name')} · **{_name(f.get('status'), 'name')}** · 우선순위 {_name(f.get('priority'), 'name')}",
-             f"- 담당 {_name(f.get('assignee'))} · 보고 {_name(f.get('reporter'))}"]
+             f"- {_name(f.get('issuetype'), 'name')} · **{_name(f.get('status'), 'name')}** · priority {_name(f.get('priority'), 'name')}",
+             f"- assignee {_name(f.get('assignee'))} · reporter {_name(f.get('reporter'))}"]
     parent = f.get("parent")
     if parent:
-        lines.append(f"- 상위 {parent.get('key')} {((parent.get('fields') or {}).get('summary') or '')}")
+        lines.append(f"- parent {parent.get('key')} {((parent.get('fields') or {}).get('summary') or '')}")
     if f.get("labels"):
-        lines.append("- 라벨 " + ", ".join(f["labels"]))
-    lines += [f"- 생성 {str(f.get('created', ''))[:16]} · 수정 {str(f.get('updated', ''))[:16]}", f"- <{t['url']}>",
-              "", "## 설명", "", adf.to_markdown(f.get("description")) or "_(없음)_"]
+        lines.append("- labels " + ", ".join(f["labels"]))
+    lines += [f"- created {str(f.get('created', ''))[:16]} · updated {str(f.get('updated', ''))[:16]}", f"- <{t['url']}>",
+              "", "## Description", "", adf.to_markdown(f.get("description")) or "_(none)_"]
     comments = (f.get("comment") or {}).get("comments") or []
     if comments:
-        lines += ["", f"## 코멘트 ({len(comments)})"]
+        lines += ["", f"## Comments ({len(comments)})"]
         for c in comments:
             lines += ["", f"### {_name(c.get('author'))} · {str(c.get('created', ''))[:16]}", "", adf.to_markdown(c.get("body"))]
     return "\n".join(lines) + "\n"
@@ -197,29 +197,29 @@ def github_pr(t, timeout):
     lines = [f"# {d.get('title', '')} (#{d.get('number', t['number'])})", "",
              f"- **{state}** · {_name(d.get('author'), 'login')} · {d.get('baseRefName')} ← {d.get('headRefName')}"
              f" · +{d.get('additions', 0)}/-{d.get('deletions', 0)}",
-             f"- <{d.get('url', t['url'])}>", "", d.get("body") or "_(설명 없음)_"]
+             f"- <{d.get('url', t['url'])}>", "", d.get("body") or "_(no description)_"]
     reviews = [r for r in d.get("reviews") or [] if r.get("body") or r.get("state") != "COMMENTED"]
     if reviews:
-        lines += ["", f"## 리뷰 ({len(reviews)})"]
+        lines += ["", f"## Reviews ({len(reviews)})"]
         for r in reviews:
             lines += ["", f"### {_name(r.get('author'), 'login')} · {r.get('state')} · {str(r.get('submittedAt', ''))[:10]}"]
             if r.get("body"):
                 lines += ["", r["body"]]
     if inline is None:
-        lines += ["", "## 인라인 코멘트", "", "_가져오지 못했습니다 (gh api 권한)._"]
+        lines += ["", "## Inline comments", "", "_Could not be fetched (gh api permissions)._"]
     elif inline:
-        lines += ["", f"## 인라인 코멘트 ({len(inline)})"]
+        lines += ["", f"## Inline comments ({len(inline)})"]
         for c in inline:
             where = f"{c.get('path')}:{c.get('line') or c.get('original_line') or ''}"
             reply = "↳ " if c.get("in_reply_to_id") else ""
             lines += ["", f"### {reply}`{where}` · {_name(c.get('user'), 'login')}", "", c.get("body", "")]
     if d.get("comments"):
-        lines += ["", f"## 코멘트 ({len(d['comments'])})"]
+        lines += ["", f"## Comments ({len(d['comments'])})"]
         for c in d["comments"]:
             lines += ["", f"### {_name(c.get('author'), 'login')} · {str(c.get('createdAt', ''))[:10]}", "", c.get("body", "")]
     files = d.get("files") or []
     if files:
-        lines += ["", f"## 바뀐 파일 ({len(files)})", ""]
+        lines += ["", f"## Files changed ({len(files)})", ""]
         lines += [f"- {f.get('path')} (+{f.get('additions', 0)}/-{f.get('deletions', 0)})" for f in files]
     return "\n".join(lines) + "\n"
 
@@ -240,7 +240,7 @@ def fetch_mcp(t, timeout):
                                            for tool in tools + ["getAccessibleAtlassianResources"]] + ["Read"])],
               timeout)
     if not out.strip():
-        raise Failure("error", "MCP 응답이 비었습니다")
+        raise Failure("error", "the MCP answer was empty")
     return out + f"\n\n---\n\n- <{t['url']}>\n"
 
 
@@ -257,17 +257,17 @@ PROVIDERS = {  # (name, executable, fetcher, minimum timeout in seconds)
 def guide(t, attempts):
     url = t.get("url") or t.get("text", "")
     if not attempts:
-        return f"# 지원하지 않는 링크입니다\n\n- <{url}>\n\n---\n\n**o** 키: 브라우저로 열기\n"
+        return f"# Unsupported link\n\n- <{url}>\n\n---\n\n**o**: open in the browser\n"
     none_installed = all(f.reason == "missing" for _, f in attempts)
-    lines = ["# " + ("사용할 수 있는 도구가 설치되어 있지 않습니다" if none_installed else "가져오지 못했습니다"),
-             "", f"- 링크: <{url}>", "", "아래 순서로 시도했습니다.", "", "| 도구 | 결과 | 해결 방법 |", "| --- | --- | --- |"]
+    lines = ["# " + ("None of the tools for this link is installed" if none_installed else "Could not fetch this link"),
+             "", f"- Link: <{url}>", "", "Tried in this order:", "", "| Tool | Result | Fix |", "| --- | --- | --- |"]
     for name, f in attempts:
         fix = {"missing": INSTALL[name], "auth": LOGIN[name],
-               "notfound": "링크와 로그인한 계정을 확인하세요" + (" (`gh auth status`)" if name == "gh" else ""),
-               "timeout": f"{f.detail} 안에 응답이 없었습니다. **f** 로 다시 시도하세요"}.get(f.reason, "아래 오류를 확인하세요")
+               "notfound": "check the link and the logged-in account" + (" (`gh auth status`)" if name == "gh" else ""),
+               "timeout": f"no answer within {f.detail}; press **f** to try again"}.get(f.reason, "see the error below")
         lines.append(f"| {name} | {REASON[f.reason]} | {fix} |")
     details = [(n, f) for n, f in attempts if f.detail and f.reason in ("auth", "notfound", "error")]
     for name, f in details:
         lines += ["", f"**{name}**", "", "```", f.detail[:600], "```"]
-    lines += ["", "---", "", "**o** 키: 브라우저로 열기 · **f** 키: 다시 시도"]
+    lines += ["", "---", "", "**o**: open in the browser · **f**: try again"]
     return "\n".join(lines) + "\n"

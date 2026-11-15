@@ -84,11 +84,11 @@ Plugins for herdr itself, installed with `herdr plugin install`, not through Cla
 <!-- herdr-plugins:start -->
 | Plugin | Description |
 |---|---|
-| [`glow-preview`](herdr-plugins/glow-preview/README.md) | Click a markdown or source path, or a Jira, Confluence or GitHub PR link, in a Claude Code pane to read it in a pane to its right: markdown rendered with glow (switchable to source with bat), source with bat, links fetched through acli / jira-cli / cme / gh, with Atlassian MCP as the last resort. Nothing opens without a click. |
+| [`peek`](herdr-plugins/peek/README.md) | Click a markdown or source path, or a Jira, Confluence or GitHub PR link, in a Claude Code pane to read it in a pane to its right: markdown rendered with glow (switchable to source with bat), source with bat, links fetched through acli / jira-cli / cme / gh, with Atlassian MCP as the last resort. Nothing opens without a click. |
 <!-- herdr-plugins:end -->
 
 ```sh
-herdr plugin install nyjin/herdr-skills/herdr-plugins/glow-preview
+herdr plugin install nyjin/herdr-skills/herdr-plugins/peek
 ```
 
 ## Repository layout
