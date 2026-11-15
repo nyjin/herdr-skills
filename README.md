@@ -84,7 +84,7 @@ Plugins for herdr itself, installed with `herdr plugin install`, not through Cla
 <!-- herdr-plugins:start -->
 | Plugin | Description |
 |---|---|
-| [`peek`](herdr-plugins/peek/README.md) | Click a markdown or source path, or a Jira, Confluence or GitHub PR link, in a Claude Code pane to read it in a pane to its right: markdown rendered with glow (switchable to source with bat), source with bat, links fetched through acli / jira-cli / cme / gh, with Atlassian MCP as the last resort. Nothing opens without a click. |
+| [`peek`](herdr-plugins/peek/README.md) | Click a path (markdown, source, image, HTML) or a Jira, Confluence or GitHub PR link in a Claude Code pane to read it, rendered by macOS's WebKit, in a pane to its right. Find, zoom, screenshots, links, and a redraw when the file changes. Nothing to install besides the plugin; nothing opens without a click. |
 <!-- herdr-plugins:end -->
 
 ```sh

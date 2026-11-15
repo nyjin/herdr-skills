@@ -84,7 +84,7 @@ herdr 자체의 플러그인입니다. Claude Code가 아니라 `herdr plugin in
 <!-- herdr-plugins:start -->
 | 플러그인 | 설명 |
 |---|---|
-| [`peek`](herdr-plugins/peek/README.ko.md) | Claude Code pane에 보이는 마크다운·소스 경로나 Jira·Confluence·GitHub PR 링크를 클릭하면 오른쪽 pane에서 읽을 수 있습니다. 마크다운은 glow로 렌더링하고(bat 원문으로 전환 가능), 소스는 bat으로 보여 줍니다. 링크는 acli·jira-cli·cme·gh로 가져오고, 모두 안 되면 마지막으로 Atlassian MCP를 씁니다. 클릭하지 않으면 아무것도 열지 않습니다. |
+| [`peek`](herdr-plugins/peek/README.ko.md) | Claude Code pane에 보이는 경로(마크다운, 소스, 이미지, HTML)나 Jira·Confluence·GitHub PR 링크를 클릭하면, macOS의 WebKit으로 렌더링해 오른쪽 pane에서 보여 줍니다. 찾기, 확대·축소, 스크린샷, 링크 이동을 지원하고, 파일이 바뀌면 다시 그립니다. 플러그인 말고는 설치할 것이 없고, 클릭하지 않으면 아무것도 열지 않습니다. |
 <!-- herdr-plugins:end -->
 
 ```sh

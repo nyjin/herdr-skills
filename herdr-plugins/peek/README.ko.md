@@ -2,48 +2,44 @@
 
 [English](README.md) | **한국어**
 
-Claude Code pane에 보이는 파일 경로나 링크를 **클릭하면** 오른쪽 pane에 그 내용을 띄우는 herdr 플러그인이다. 클릭하지 않으면 아무것도 열지 않는다.
+Claude Code pane에 보이는 파일이나 링크를 **클릭하면**, 오른쪽 pane에서 웹 페이지처럼 렌더링해 보여 주는 herdr 플러그인입니다. 클릭하지 않으면 아무것도 열지 않습니다.
 
-| 클릭한 것 | 가져오는 도구 (앞에서부터 시도) | 보여 주는 도구 |
-|---|---|---|
-| `.md`·`.markdown` 경로 | 파일 그대로 | [glow](https://github.com/charmbracelet/glow)(렌더링) ↔ [bat](https://github.com/sharkdp/bat)(원문) |
-| 소스코드 경로 (`.py` `.java` `.kt` `.ts` …). `:줄`이 붙으면 그 줄로 이동하고 강조 | 파일 그대로 | bat |
-| Jira `…atlassian.net/browse/KEY` | [acli](https://developer.atlassian.com/cloud/acli/reference/commands/) → [jira-cli](https://github.com/ankitpokhrel/jira-cli) → Atlassian MCP | glow |
-| Confluence `…atlassian.net/wiki/…` | [cme](https://github.com/Spenhouet/confluence-markdown-exporter) → Atlassian MCP | glow |
-| GitHub PR `github.com/<o>/<r>/pull/<n>` | gh | glow |
+macOS에 들어 있는 WebKit이 화면 밖에서 페이지를 그리고, 그 그림을 Kitty 그래픽으로 herdr pane에 pane의 원래 해상도 그대로 보여 줍니다. 따로 설치할 것은 없습니다. glow, bat, python3, CLI 도구 모두 필요 없습니다.
 
-- 설치되지 않은 도구는 건너뛰고, 실패한 도구는 다음 도구에 넘긴다.
-- 모두 안 되면 도구마다 결과(설치 안 됨, 로그인 필요, 권한 없음, 시간 초과)와 해결 방법을 표로 보여 준다.
-- Atlassian MCP는 `claude -p`로 Claude의 Atlassian 커넥터를 부르는 방식이다. 실측으로 Jira 13초, Confluence 27초였고, 부를 때마다 Claude 사용량이 든다. 그래서 순서의 맨 뒤에 둔다.
-- 가져온 문서는 URL 해시로 캐시한다. 다시 클릭하면 캐시를 바로 보여 준다. less 아래 줄에 링크, 사용한 도구, 가져온 시각이 나오고, 메뉴의 `f`로 새로 가져온다.
-- 짧게 줄인 경로(`docs/a.md`, `…/deep/a.md`, `a.md`)는 네 곳에서 후보를 모아 찾는다: 작업 폴더(`foreground_cwd`), 세션 scratchpad, 세션 대화 기록, git 저장소.
-  - 후보가 1개면 바로 연다.
-  - 여러 개면 번호 목록을 띄운다. 최근에 다룬 파일이 위에 온다.
-  - 없으면 herdr 알림을 띄운다.
-- 그 밖의 웹 주소는 가로채지 않고 브라우저로 연다.
-- 뷰어는 Claude pane 하나에 하나씩 열리고, 열릴 때 포커스를 가져가지 않는다. glow나 bat이 없으면 알림을 띄우고 `brew install`로 설치한다.
+| 클릭한 것 | 보이는 모습 |
+|---|---|
+| `.md`·`.markdown` 경로 | 렌더링한 마크다운(표, 체크리스트, 각주, 이미지). `t`로 원문 전환 |
+| 소스 경로(`.py` `.java` `.kt` `.ts` `.rs` …). 끝에 `:줄`이 있으면 그 줄로 이동해 표시 | 줄 번호가 붙은 문법 강조 소스 |
+| 이미지(`.png` `.jpg` `.gif` `.webp` `.svg`)나 `.html` 파일 | 이미지, 또는 자체 스타일을 그대로 적용한 페이지 |
+| Jira `…atlassian.net/browse/KEY` | 요약, 상태, 담당자, 설명, 댓글 |
+| Confluence `…atlassian.net/wiki/…/pages/<id>` | 페이지 본문 |
+| GitHub PR `github.com/<o>/<r>/pull/<n>` | 제목, 상태, 설명, 댓글 |
 
-## 도구 설치·로그인
+- 줄여 쓴 경로(`docs/a.md`, `…/deep/a.md`, `a.md`)는 네 곳에서 한꺼번에 찾습니다. pane의 작업 폴더, 세션 scratchpad, 세션 기록(transcript), git 저장소입니다. 하나면 바로 열고, 여럿이면 번호 목록을 보여 주고, 없으면 herdr 알림을 띄웁니다.
+- 그 밖의 웹 주소는 가로채지 않습니다. 브라우저로 열립니다.
+- 뷰어는 Claude pane마다 하나이고, 포커스를 가져가지 않고 열립니다. 보고 있는 파일을 지켜보다가 Claude나 사용자가 저장하면 읽던 위치 그대로 다시 그립니다.
+- 페이지 스크립트는 실행하지 않습니다. 마크다운 안의 HTML은 보이기만 하고 동작하지 않습니다. HTML 파일은 자체 스타일시트를 쓰되 스크립트는 꺼져 있습니다. 원격 이미지는 불러옵니다. mermaid와 수식은 코드로 보입니다.
 
-| 도구 | 설치 | 로그인 |
-|---|---|---|
-| acli | `brew tap atlassian/homebrew-acli && brew install acli` | `acli jira auth login` |
-| jira-cli | `brew install ankitpokhrel/jira-cli/jira-cli` | `jira init` (API 토큰은 `JIRA_API_TOKEN`) |
-| cme | `uv tool install confluence-markdown-exporter` | `cme config` |
-| gh | `brew install gh` | `gh auth login` |
-| Atlassian MCP | Claude Code(`claude`) | claude.ai에서 Atlassian 커넥터 연결 |
+## 키와 상단 막대
 
-gh는 PR을 `gh pr view <n> -R <o>/<r>`로 가져온다. 저장소별로 계정을 고르는 gh 래퍼가 있으면 `-R`을 보고 계정을 고른다. 인라인 코멘트를 가져오는 `gh api`는 `-R`을 받지 않는다. 그래서 404가 나면 `gh auth status`에 있는 계정 토큰으로 차례로 다시 시도한다.
+뷰어 맨 윗줄은 막대입니다. 문서 이름, 그리고 Reload, Source, Find, − 배율 +, Shot, Browser가 있습니다. 항목에 마우스를 올리면 이름과 키가 보이고, 클릭하면 실행됩니다. pane이 좁으면 막대에는 키만 보입니다.
 
-## 메뉴 (less에서 `q`)
+| 키 | 하는 일 |
+|---|---|
+| `j` `k` ↑ ↓, 휠 | 몇 줄 스크롤 |
+| `space` `b` PgDn PgUp | 한 화면 스크롤 |
+| `g` `G` | 처음, 끝 |
+| `/` | 찾기: 입력하고 `Enter`나 `n`으로 다음, `N`으로 이전, `Esc`로 닫기. `Alt-c` 대소문자 구분, `Alt-w` 단어 단위, `Alt-r` 정규식(`Aa` `ab` `.*`를 클릭해도 됨) |
+| `r` | 다시 읽기(링크는 다시 받아 옴) |
+| `t` | 렌더링 ↔ 원문 |
+| `+` `-` `0` | 확대, 축소, 원래대로(50~200 %, 기억함) |
+| `s` | 지금 화면 스크린샷. 클립보드에도 복사 |
+| `o` | 브라우저로 열기(로컬 문서는 이미지까지 포함한 페이지로, 링크는 원래 주소로) |
+| 링크 클릭 | 로컬 파일은 여기서 열고, 웹 주소는 브라우저로, `#앵커`는 그 위치로 스크롤 |
+| `h` Backspace | 뒤로 |
+| `q` | 뷰어 닫기 |
 
-- `r` 다시 보기
-- `s` 렌더링/원문 전환 (마크다운)
-- `f` 새로 가져오기 (링크)
-- `o` 브라우저로 열기 (링크)
-- `q` 뷰어 닫기
-
-렌더링/원문 전환은 herdr 액션 **peek: toggle rendered/source**로도 할 수 있다. 뷰어 pane이나 Claude pane에 포커스를 둔 채 실행하면 된다. 단축키로 쓰려면 `~/.config/herdr/config.toml`에 아래를 추가한다. 이 형식은 `herdr config check`로 검사를 통과했다.
+모든 명령은 herdr 액션(`peek: reload`, `peek: zoom in` …)으로도 있어서 Claude pane에서도 쓸 수 있습니다. 키에 묶으려면 `~/.config/herdr/config.toml`에 다음을 넣으세요(`herdr config check`를 통과하는 형식입니다).
 
 ```toml
 [[keys.command]]
@@ -52,36 +48,48 @@ type = "plugin_action"
 command = "nyjin.peek:toggle-view"
 ```
 
+## Jira, Confluence, GitHub 토큰
+
+링크는 각 서비스의 API로 받아 오기 때문에, 서비스마다 토큰을 한 번 등록해야 합니다. 토큰은 macOS 키체인(서비스 이름 `peek`)에 저장됩니다.
+
+```sh
+peek auth atlassian <site>.atlassian.net   # 이메일, 그다음 API 토큰(id.atlassian.com → Security → API tokens)
+peek auth github                           # GitHub 토큰(공개 저장소도 필요합니다)
+```
+
+플러그인의 바이너리로 실행합니다: `<플러그인 폴더>/bin/peek auth …`. 토큰이 없으면 뷰어가 실행할 명령을 알려 줍니다. 실행한 뒤 `r`을 누르세요.
+
+## 파일이 놓이는 곳
+
+```
+/tmp/peek-<uid>/<project>/<session>/      다른 사용자는 읽을 수 없음(0700). <session>은 그 pane의 Claude 세션, 없으면 pane-<id>
+  screenshots/<YYYYMMDD-HHMMSS>-<문서>[-L<줄>].png
+  browser/<문서>.html                     브라우저로 넘긴 페이지
+  pages/                                  뷰어가 불러오는 페이지
+  viewer.log                              마지막 뷰어 실행의 시간 기록과 오류
+~/.local/state/peek/                      뷰어마다 보여 줄 것, 확대 배율
+~/.cache/peek/links/                      받아 온 Jira, Confluence, PR 페이지와 이미지
+```
+
+`/tmp`는 재시작할 때 비워질 수 있습니다. 남겨 둘 스크린샷은 다른 곳으로 옮기세요.
+
 ## 설치 / 제거
 
 ```sh
-herdr plugin install nyjin/herdr-skills/herdr-plugins/peek   # 설치
-herdr plugin uninstall nyjin.peek                            # 제거
+git clone https://github.com/nyjin/herdr-skills && cd herdr-skills/herdr-plugins/peek
+cargo build --release                       # Rust 툴체인이 필요합니다. 릴리스 다운로드는 준비 중입니다
+herdr plugin link "$PWD"                    # 설치
+herdr plugin uninstall nyjin.peek           # 제거
 ```
 
-이 저장소를 받아 둔 곳에서 바로 쓰려면 저장소 루트에서 `herdr plugin link "$PWD/herdr-plugins/peek"`로 붙인다.
+macOS와 herdr 0.9.3 이상, Kitty 그래픽을 지원하는 터미널(Ghostty)이 필요합니다. pane 안의 그림은 herdr의 표준 Kitty 그래픽으로 그리며, herdr 0.9.5는 이 기능이 기본으로 켜져 있습니다.
 
-0.3.0까지는 이름이 glow-preview(`nyjin.glow-preview`)였다. 그 버전을 설치해 두었다면 `herdr plugin uninstall nyjin.glow-preview`로 지운 뒤 새로 설치한다.
+0.3.0까지는 이름이 glow-preview(`nyjin.glow-preview`)였습니다. 그것을 설치했다면 `herdr plugin uninstall nyjin.glow-preview`로 지운 뒤 peek을 설치하세요.
 
-macOS, herdr 0.9.3 이상, python3가 필요하다.
+## 구성
 
-## 구조
-
-- `scripts/peek.py`: 진입점 세 개
-  - `link`: 링크 핸들러
-  - `toggle`: 전환 액션
-  - `viewer`: 플러그인 pane. 파일과 링크 모두 `load()`를 거쳐 less로 보여 준다
-- `scripts/resolve.py`: 클릭한 경로 → 후보 파일
-- `scripts/targets.py`: 클릭 문자열 → 링크 종류 또는 경로(+줄)
-- `scripts/fetch.py`: 링크 → 마크다운. 도구를 순서대로 시도하고, 모두 안 되면 안내를 만든다
-- `scripts/adf.py`: Atlassian 문서(ADF) → 마크다운. acli와 jira-cli 결과에 쓴다
-- 상태 (`~/.local/state/peek/`):
-  - `<claude-pane>.json`: 보여 줄 항목
-  - `.viewer`: 뷰어 pane id
-  - `.mode`: 렌더링/원문
-- 캐시 (`~/.cache/peek/`):
-  - `<해시>.md`: 가져온 문서
-  - `.tool`: 사용한 도구
-  - `.cme/`: cme 내보내기 폴더
-- 테스트: `python3 -m unittest discover -s tests`
-- 설계와 계획(glow-preview라는 이름으로 쓴 기록): `docs/superpowers/specs/2026-11-13-glow-preview-design.md`, `docs/superpowers/plans/2026-11-13-glow-preview-plan*.md`
+- `src/`: 크레이트 하나입니다. 플랫폼과 무관한 모듈(`target`, `resolve`, `state`, `herdr`, `link`, `page`, `script`, `fetch`, `kitty`, `term`)은 어디서나 빌드·테스트되고, `src/mac/`(WebKit 렌더러, 뷰어, 파일 감시, 키체인, 클립보드)은 macOS가 필요합니다.
+- `bin/peek`: 이 폴더에서 빌드한 바이너리를 실행합니다.
+- `tests/`: `cargo test`(`scripts/check.sh unit`이 실행합니다).
+- `evals/`: 렌더링 실험과 측정 결과(`evals/results.md`). 스크린샷은 로컬에만 둡니다.
+- 설계: `docs/superpowers/specs/2026-11-15-peek-webkit-viewer-design.md`.

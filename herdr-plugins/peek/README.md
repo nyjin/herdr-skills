@@ -2,48 +2,44 @@
 
 **English** | [한국어](README.ko.md)
 
-A herdr plugin that shows a file or link from a Claude Code pane in a pane to its right, **when you click it**. Nothing opens without a click.
+A herdr plugin that shows a file or link from a Claude Code pane, rendered like a web page, in a pane to its right, **when you click it**. Nothing opens without a click.
 
-| You click | Fetched with (tried in order) | Shown with |
-|---|---|---|
-| a `.md` / `.markdown` path | the file itself | [glow](https://github.com/charmbracelet/glow) (rendered) ↔ [bat](https://github.com/sharkdp/bat) (source) |
-| a source path (`.py` `.java` `.kt` `.ts` …); a trailing `:line` jumps to and highlights that line | the file itself | bat |
-| Jira `…atlassian.net/browse/KEY` | [acli](https://developer.atlassian.com/cloud/acli/reference/commands/) → [jira-cli](https://github.com/ankitpokhrel/jira-cli) → Atlassian MCP | glow |
-| Confluence `…atlassian.net/wiki/…` | [cme](https://github.com/Spenhouet/confluence-markdown-exporter) → Atlassian MCP | glow |
-| GitHub PR `github.com/<o>/<r>/pull/<n>` | gh | glow |
+macOS's own WebKit renders the page out of sight, and the picture is shown in the herdr pane with Kitty graphics, at the pane's full resolution. Nothing else has to be installed: no glow, bat, python3 or CLI tools.
 
-- A tool that is not installed is skipped; one that fails hands over to the next.
-- When none works, the viewer shows a table with each tool, what happened (not installed, login needed, not found or no access, timed out) and the command that fixes it.
-- Atlassian MCP runs `claude -p` with Claude's Atlassian connector. It took 13 s for a Jira issue and 27 s for a Confluence page when measured, and every call costs Claude usage, so it is tried last.
-- Fetched documents are cached by URL hash. Clicking the link again shows the cached copy at once. The bottom line of less shows the link, the tool used and when it was fetched; `f` in the menu fetches again.
-- A shortened path (`docs/a.md`, `…/deep/a.md`, `a.md`) is looked up in four places at once: the pane's working folder (`foreground_cwd`), the session scratchpad, the session transcript and the git checkout.
-  - One candidate opens directly.
-  - Several show a numbered list, most recently used first.
-  - None shows a herdr notification.
-- Other web URLs are not intercepted; they open in the browser.
-- There is one viewer per Claude pane, and it opens without taking focus. When glow or bat is missing, the viewer says so in a notification and installs it with `brew install`.
+| You click | Shown as |
+|---|---|
+| a `.md` / `.markdown` path | rendered markdown (tables, task lists, footnotes, images); `t` switches to the source |
+| a source path (`.py` `.java` `.kt` `.ts` `.rs` …); a trailing `:line` jumps to and marks that line | highlighted source with line numbers |
+| an image (`.png` `.jpg` `.gif` `.webp` `.svg`) or an `.html` file | the image, or the page with its own styles |
+| Jira `…atlassian.net/browse/KEY` | summary, status, assignee, description and comments |
+| Confluence `…atlassian.net/wiki/…/pages/<id>` | the page body |
+| GitHub PR `github.com/<o>/<r>/pull/<n>` | title, state, description and comments |
 
-## Tools: install and log in
+- A shortened path (`docs/a.md`, `…/deep/a.md`, `a.md`) is looked up in four places at once: the pane's working folder, the session scratchpad, the session transcript and the git checkout. One candidate opens directly; several show a numbered list; none gives a herdr notification.
+- Other web addresses are not intercepted; they open in the browser.
+- There is one viewer per Claude pane, opened without taking focus. It follows the shown file: when Claude (or you) saves it, the page is redrawn where you were reading.
+- Page scripts never run. HTML inside markdown is shown but inert; HTML files keep their stylesheets, scripts stay off. Remote images load. Mermaid and math show as code.
 
-| Tool | Install | Log in |
-|---|---|---|
-| acli | `brew tap atlassian/homebrew-acli && brew install acli` | `acli jira auth login` |
-| jira-cli | `brew install ankitpokhrel/jira-cli/jira-cli` | `jira init` (API token in `JIRA_API_TOKEN`) |
-| cme | `uv tool install confluence-markdown-exporter` | `cme config` |
-| gh | `brew install gh` | `gh auth login` |
-| Atlassian MCP | Claude Code (`claude`) | connect the Atlassian connector on claude.ai |
+## Keys and the top bar
 
-PRs are fetched with `gh pr view <n> -R <o>/<r>`, so a gh wrapper that picks the account per repository sees the repository. `gh api`, used for inline review comments, takes no `-R`; on a 404 it is retried with the token of each account in `gh auth status`.
+The top row of the viewer is a bar: the document's name, then Reload, Source, Find, − zoom +, Shot and Browser. Hovering an item shows its name and key; clicking runs it. In a narrow pane the bar shows the keys only.
 
-## Menu (`q` in less)
+| Key | Does |
+|---|---|
+| `j` `k` ↑ ↓, the wheel | scroll a few lines |
+| `space` `b` PgDn PgUp | scroll a screen |
+| `g` `G` | top, bottom |
+| `/` | find: type, `Enter` or `n` next, `N` previous, `Esc` closes; `Alt-c` match case, `Alt-w` whole word, `Alt-r` regular expression (or click `Aa` `ab` `.*`) |
+| `r` | reload (fetches a link again) |
+| `t` | rendered ↔ source |
+| `+` `-` `0` | zoom in, out, reset (50-200 %, remembered) |
+| `s` | screenshot of the screen, also copied to the clipboard |
+| `o` | open in the browser (a local document as a page with its images; a link at its address) |
+| a click on a link | a local file opens here, a web address in the browser, `#anchor` scrolls |
+| `h` Backspace | back |
+| `q` | close the viewer |
 
-- `r` show again
-- `s` rendered ↔ source (markdown)
-- `f` fetch again (links)
-- `o` open in the browser (links)
-- `q` close the viewer
-
-The herdr action **peek: toggle rendered/source** also switches rendered ↔ source, from the viewer pane or its Claude pane, even while less is open. To bind it to a key, add this to `~/.config/herdr/config.toml` (the format passes `herdr config check`):
+Every command is also a herdr action (`peek: reload`, `peek: zoom in` …), usable from the Claude pane too. To bind one to a key, add this to `~/.config/herdr/config.toml` (the format passes `herdr config check`):
 
 ```toml
 [[keys.command]]
@@ -52,36 +48,48 @@ type = "plugin_action"
 command = "nyjin.peek:toggle-view"
 ```
 
+## Jira, Confluence and GitHub tokens
+
+Links are fetched through each service's API, so peek needs a token once per service. It is kept in the macOS Keychain (service `peek`).
+
+```sh
+peek auth atlassian <site>.atlassian.net   # your email, then an API token (id.atlassian.com → Security → API tokens)
+peek auth github                           # a GitHub token (public repositories need one too)
+```
+
+Run them with the plugin's binary: `<plugin folder>/bin/peek auth …`. Without a token the viewer shows the command to run; press `r` after running it.
+
+## Where things go
+
+```
+/tmp/peek-<uid>/<project>/<session>/      private (0700); <session> is the Claude session of the pane, or pane-<id>
+  screenshots/<YYYYMMDD-HHMMSS>-<document>[-L<line>].png
+  browser/<document>.html                 the page handed to the browser
+  pages/                                  pages the viewer loads
+  viewer.log                              timings and errors of the last viewer run
+~/.local/state/peek/                      what each viewer shows, and the zoom
+~/.cache/peek/links/                      fetched Jira, Confluence and PR pages and their images
+```
+
+`/tmp` may be emptied on restart: copy screenshots you want to keep.
+
 ## Install / remove
 
 ```sh
-herdr plugin install nyjin/herdr-skills/herdr-plugins/peek   # install
-herdr plugin uninstall nyjin.peek                            # remove
+git clone https://github.com/nyjin/herdr-skills && cd herdr-skills/herdr-plugins/peek
+cargo build --release                       # needs a Rust toolchain; release downloads are planned
+herdr plugin link "$PWD"                    # install
+herdr plugin uninstall nyjin.peek           # remove
 ```
 
-From the root of a checkout of this repository, `herdr plugin link "$PWD/herdr-plugins/peek"` links the plugin.
+Requires macOS and herdr 0.9.3 or later in a terminal with Kitty graphics (Ghostty); pictures in panes need herdr's standard Kitty graphics, which herdr 0.9.5 turns on by default.
 
 Up to 0.3.0 the plugin was called glow-preview (`nyjin.glow-preview`). If you installed it, remove it with `herdr plugin uninstall nyjin.glow-preview`, then install peek.
 
-Requires macOS, herdr 0.9.3 or later and python3.
-
 ## Layout
 
-- `scripts/peek.py`: three entry points
-  - `link`: the link handler
-  - `toggle`: the switch action
-  - `viewer`: the plugin pane; files and links both go through `load()` and are paged with less
-- `scripts/resolve.py`: clicked path → candidate files
-- `scripts/targets.py`: clicked text → link kind, or path (+ line)
-- `scripts/fetch.py`: link → markdown, trying the tools in order and writing the guide when none works
-- `scripts/adf.py`: Atlassian Document Format → markdown, used for acli and jira-cli output
-- State (`~/.local/state/peek/`):
-  - `<claude-pane>.json`: what to show
-  - `.viewer`: the viewer pane id
-  - `.mode`: rendered or source
-- Cache (`~/.cache/peek/`):
-  - `<hash>.md`: the fetched document
-  - `.tool`: the tool used
-  - `.cme/`: cme's export folder
-- Tests: `python3 -m unittest discover -s tests`
-- Design and plans (written under the name glow-preview): `docs/superpowers/specs/2026-11-13-glow-preview-design.md`, `docs/superpowers/plans/2026-11-13-glow-preview-plan*.md`
+- `src/`: one crate. Platform-neutral modules (`target`, `resolve`, `state`, `herdr`, `link`, `page`, `script`, `fetch`, `kitty`, `term`) build and test anywhere; `src/mac/` (WebKit renderer, viewer, file watch, Keychain, clipboard) needs macOS.
+- `bin/peek`: runs the binary built in this folder.
+- `tests/`: `cargo test` (`scripts/check.sh unit` runs it).
+- `evals/`: the rendering spike and the measured results (`evals/results.md`); screenshots stay local.
+- Design: `docs/superpowers/specs/2026-11-15-peek-webkit-viewer-design.md`.

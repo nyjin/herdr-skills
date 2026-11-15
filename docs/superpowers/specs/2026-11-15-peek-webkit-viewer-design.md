@@ -22,7 +22,7 @@ installed besides the plugin itself (the old version needed glow, bat, acli, jir
 - Remote images in local documents always load.
 - A changed file is redrawn automatically (file change events, not polling).
 - Links inside a rendered page: a local file opens in peek (with back); a web address opens in the default browser.
-- File types: markdown, source, images, SVG and HTML. PDF only if it renders well (not yet tested).
+- File types: markdown, source, images, SVG and HTML. PDF only if it renders well (left out of 0.5.0).
 - Jira, Confluence and GitHub PR content is fetched through each service's API with a token that the user registers
   with `peek auth`, and shown in the pane.
 - Screenshots go under `/tmp` (layout below).
@@ -221,3 +221,27 @@ Debounce 300 ms; reload and keep the reading position.
 
 The exact keys for the find toggles, tooltip placement, tile budget tuning, the font size formula, error page wording,
 and the HTTP client crate.
+
+## What shipped (0.5.0, 2026-11-15)
+
+Built as designed, in the order of `docs/superpowers/plans/2026-11-15-peek-webkit-viewer-plan.md` (Tasks 2-4 by
+three workers in parallel, the viewer in one stream). Integration test and timings: `herdr-plugins/peek/evals/results.md`
+(key to screen 44-52 ms against 38 ms for terminal text; click to the viewer's first change about 120 ms).
+
+Differences from the design above:
+
+- HTML files get `script-src 'none'; object-src 'none'` instead of the page CSP, so their own stylesheets, images and
+  fonts load; scripts stay off (also in the browser copy).
+- Markdown headings get GitHub-style ids (`#the-end`), so in-page links work.
+- Jira comments come from a second call (`/rest/api/3/issue/<KEY>/comment?expand=renderedBody`), paged; GitHub
+  comments are paged too. GitHub needs a token for public repositories as well.
+- Images on the same Atlassian site are downloaded with the token, attachments or not.
+- The first page waits for the pane's pixel size (herdr reports it a moment after the pane starts); the page's font
+  size is the cell height in CSS px / 1.35.
+- The viewer checks the state file's modification time every 30 ms; a command already in the file when the viewer
+  starts is skipped.
+- The file watch reacts only when the file's modification time or size differs.
+- In a narrow pane the top bar shows the keys instead of the words. `Enter` in the find field also steps to the next
+  match. `=` zooms in as well as `+`.
+- Each viewer writes `viewer.log` (timings, errors) in its session folder.
+- PDF is not handled (it shows as text); no time was spent on it in this round.
