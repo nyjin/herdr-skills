@@ -27,6 +27,9 @@ jobs:
       - name: README tables match skills/ and herdr-plugins/
         run: scripts/check.sh readme
 
+      - name: English outside .ko.md files and tests
+        run: scripts/check.sh language
+
       - name: finalize-brief.py smoke test
         run: scripts/check.sh finalize-brief
 

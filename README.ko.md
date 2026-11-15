@@ -103,7 +103,7 @@ herdr plugin install nyjin/herdr-skills/herdr-plugins/peek
 
 ## 기여하기
 
-저장소의 글은 모두 영어로 씁니다. 한국어는 `README.ko.md` 파일과, 필요한 경우의 테스트(한국어 모델 응답을 잡는 패턴 등)에만 씁니다.
+저장소의 글은 모두 영어로 씁니다. 한국어는 `README.ko.md` 파일과, 필요한 경우의 테스트(한국어 모델 응답을 잡는 패턴 등)에만 씁니다. `scripts/check.sh language`가 이를 확인합니다.
 
 ### 스킬 추가하기
 
@@ -116,7 +116,7 @@ herdr plugin install nyjin/herdr-skills/herdr-plugins/peek
 1. `herdr-plugins/<name>/`에 `herdr-plugin.toml`(버전은 여기에 둡니다), `README.md`, `README.ko.md`를 만듭니다.
 2. 두 README의 herdr 플러그인 표(`herdr-plugins:start`와 `herdr-plugins:end` 마커 사이)에 알파벳 순서로 한 줄씩 추가합니다.
 
-CI(`.github/workflows/skills-check.yaml`)는 `scripts/check.sh`를 돌립니다. `gh skill publish --dry-run`으로 스킬 스펙을 검증하고, `name`과 디렉터리 이름이 같은지, 두 README의 표가 `skills/`·`herdr-plugins/`와 맞는지 확인하고, 스모크 테스트와 단위 테스트를 돌립니다.
+CI(`.github/workflows/skills-check.yaml`)는 `scripts/check.sh`를 돌립니다. `gh skill publish --dry-run`으로 스킬 스펙을 검증하고, `name`과 디렉터리 이름이 같은지, 두 README의 표가 `skills/`·`herdr-plugins/`와 맞는지, 언어 규칙을 지키는지 확인하고, 스모크 테스트와 단위 테스트를 돌립니다.
 
 ## 라이선스
 

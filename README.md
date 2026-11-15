@@ -103,7 +103,7 @@ herdr plugin install nyjin/herdr-skills/herdr-plugins/peek
 
 ## Contributing
 
-All text in the repository is English. Korean appears only in the `README.ko.md` files and, where it does a job, in tests (for example patterns that match Korean model replies).
+All text in the repository is English. Korean appears only in the `README.ko.md` files and, where it does a job, in tests (for example patterns that match Korean model replies); `scripts/check.sh language` checks this.
 
 ### Adding a skill
 
@@ -116,7 +116,7 @@ All text in the repository is English. Korean appears only in the `README.ko.md`
 1. Create `herdr-plugins/<name>/` with its `herdr-plugin.toml` (its version lives there), a `README.md` and a `README.ko.md`.
 2. Add a row to the herdr plugins table in both READMEs, between the `herdr-plugins:start` and `herdr-plugins:end` markers, in alphabetical order.
 
-CI (`.github/workflows/skills-check.yaml`) runs `scripts/check.sh`: it validates the skills with `gh skill publish --dry-run`, checks that each `name` matches its directory, checks both READMEs' tables against `skills/` and `herdr-plugins/`, and runs the smoke and unit tests.
+CI (`.github/workflows/skills-check.yaml`) runs `scripts/check.sh`: it validates the skills with `gh skill publish --dry-run`, checks that each `name` matches its directory, checks both READMEs' tables against `skills/` and `herdr-plugins/`, checks the language rule, and runs the smoke and unit tests.
 
 ## License
 

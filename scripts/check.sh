@@ -4,7 +4,7 @@
 # Usage: scripts/check.sh [check ...]     no argument runs every check, in order
 #        scripts/check.sh --list          print the check names
 #
-# Checks: skill-spec names readme finalize-brief hooks runs unit
+# Checks: skill-spec names readme language finalize-brief hooks runs unit
 # Errors are printed as GitHub annotations (::error ...), which read fine in a terminal too.
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
@@ -12,7 +12,7 @@ cd "$(dirname "$0")/.." || exit 1
 # HERDR_PW_WORKER would make every simulated caller a worker; drop it, and the tab's workspace with it.
 unset HERDR_PW_WORKER HERDR_WORKSPACE_ID
 
-CHECKS=(skill-spec names readme finalize-brief hooks runs unit)
+CHECKS=(skill-spec names readme language finalize-brief hooks runs unit)
 TMP="${RUNNER_TEMP:-$(mktemp -d)}"
 SKILL=skills/herdr-parallel-worktree
 
@@ -73,6 +73,32 @@ check_readme() {
     done
   done
   return "$fail"
+}
+
+# All text in the repository is English. Korean may appear only in *.ko.md files (explanation for readers), in
+# tests (patterns that match Korean model replies, sample content), and in a README's language switcher link.
+# Characters are written as escapes so this check does not trip over itself.
+check_language() {
+  python3 - <<'PY'
+import os, re, subprocess, sys
+HANGUL = re.compile("[\u1100-\u11ff\u3130-\u318f\uac00-\ud7a3]")
+SWITCHER = re.compile(r"\[\ud55c\uad6d\uc5b4\]\([^)]*README\.ko\.md\)")
+files = subprocess.run(["git", "ls-files", "--cached", "--others", "--exclude-standard"],
+                       capture_output=True, text=True, check=True).stdout.splitlines()
+found = 0
+for path in files:
+    if path.endswith(".ko.md") or "tests" in path.split("/")[:-1] or not os.path.isfile(path):
+        continue
+    try:
+        lines = open(path, encoding="utf-8").read().splitlines()
+    except (UnicodeDecodeError, OSError):
+        continue
+    for n, line in enumerate(lines, 1):
+        if HANGUL.search(SWITCHER.sub("", line)):
+            print(f"::error file={path},line={n}::Korean text outside a .ko.md file or a test: {line.strip()[:80]}")
+            found += 1
+sys.exit(1 if found else 0)
+PY
 }
 
 # An unfilled template must be rejected; a filled brief gets the closing paragraph appended.
