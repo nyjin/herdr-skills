@@ -4,3 +4,6 @@
 .DS_Store
 .idea/
 __pycache__/
+
+# Agent worktrees (herdr workers, one per task) live inside the repository
+.worktrees/

@@ -18,3 +18,7 @@ Korean appears only in `README.ko.md` files (explanation for readers) and in tes
 ## Releases
 
 The release tag is the skills' version: `gh skill publish --tag v<version>` after merging. A herdr plugin's version lives in its `herdr-plugin.toml`.
+
+## Worktrees
+
+Agent worktrees (herdr workers, `superpowers:using-git-worktrees`) go under `.worktrees/<name>` (git-ignored), one per task. Claude Code's own `EnterWorktree` keeps using `.claude/worktrees/`.
