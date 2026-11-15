@@ -46,7 +46,18 @@ The repository holds two kinds of things, and they were tangled:
 - `manage.py on|off|remove|status` against a scratch `HOME` and `HERDR_SKILLS_DATA_HOME`.
 - `herdr plugin link herdr-plugins/peek` is left to the maintainer's herdr (the plugin needs herdr 0.9.3; the CLI here is 0.9.0).
 
-## 5. After this
+## 5. What shipped (2026-11-15)
+
+Five commits on `restructure-layout`, as designed, with these details:
+
+- peek is 0.4.0. Its READMEs tell installers of `nyjin.glow-preview` to uninstall it first: a note, not code.
+- One Korean string stays in peek's tests (`fake_cli.py`, `test_fetch.py`): a Jira comment that checks non-ASCII text comes through the CLI's JSON unchanged, with an English comment.
+- The 2026-10-05 plan quotes the Korean alternative of `live_skill.py`'s `WORKER_STOP` pattern. It is written with Python Unicode escapes, which match the same text, instead of being translated into a pattern that would match something else.
+- `check.sh language` writes its own Hangul ranges as escapes, so it passes over itself; a probe file with Korean fails it and the README language switcher passes.
+- `scripts/check.sh` passes in full. `manage.py on → status → off → on → remove → status` against a scratch `HOME` registers, silences and unregisters as described and keeps an unrelated hook in `settings.json`.
+- Not checked here: `herdr plugin link herdr-plugins/peek`, which needs herdr 0.9.3.
+
+## 6. After this
 
 - Publish a release so `gh skill` users get past v0.6.0.
 - Users of the old bundle uninstall it, install the skill and turn the hook on (README).
