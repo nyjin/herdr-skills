@@ -2,7 +2,7 @@
 //! font size, CSP, find highlight styles). (Task 3)
 use crate::fetch::Fetched;
 use crate::state::Mode;
-use pulldown_cmark::{html, CowStr, Event, LinkType, Options, Parser, Tag};
+use pulldown_cmark::{html, CowStr, Event, LinkType, Options, Parser, Tag, TagEnd};
 use regex::{Captures, Regex};
 use std::fmt::Write as _;
 use std::fs;
@@ -269,13 +269,47 @@ body.image img { max-width: 100%; height: auto; }
 ";
 
 fn markdown(text: &str, absolute_base: Option<&str>) -> String {
-    let parser = Parser::new_ext(text, MARKDOWN_OPTIONS);
+    let events = with_heading_ids(Parser::new_ext(text, MARKDOWN_OPTIONS).collect());
     let mut out = String::with_capacity(text.len() * 3 / 2);
     match absolute_base {
-        None => html::push_html(&mut out, parser),
-        Some(base) => html::push_html(&mut out, parser.map(|ev| rebase_event(ev, base))),
+        None => html::push_html(&mut out, events.into_iter()),
+        Some(base) => html::push_html(&mut out, events.into_iter().map(|ev| rebase_event(ev, base))),
     }
     out
+}
+
+/// Give headings without an id the one GitHub gives them, so links such as `#the-end` in a table of contents work:
+/// the heading text in lower case, spaces as `-`, punctuation dropped, `-1`, `-2` ... for repeats.
+fn with_heading_ids(mut events: Vec<Event<'_>>) -> Vec<Event<'_>> {
+    let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for i in 0..events.len() {
+        let Event::Start(Tag::Heading { id: None, .. }) = &events[i] else { continue };
+        let mut text = String::new();
+        for ev in &events[i + 1..] {
+            match ev {
+                Event::End(TagEnd::Heading(_)) => break,
+                Event::Text(t) | Event::Code(t) => text.push_str(t),
+                _ => {}
+            }
+        }
+        let base: String = text
+            .trim()
+            .to_lowercase()
+            .chars()
+            .filter_map(|c| match c {
+                ' ' => Some('-'),
+                c if c.is_alphanumeric() || c == '-' || c == '_' => Some(c),
+                _ => None,
+            })
+            .collect();
+        let n = seen.entry(base.clone()).or_insert(0);
+        let slug = if *n == 0 { base } else { format!("{base}-{n}") };
+        *n += 1;
+        if let Event::Start(Tag::Heading { id, .. }) = &mut events[i] {
+            *id = Some(CowStr::from(slug));
+        }
+    }
+    events
 }
 
 fn rebase_event<'a>(ev: Event<'a>, base: &str) -> Event<'a> {

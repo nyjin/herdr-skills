@@ -161,6 +161,13 @@ pub fn geometry() -> Geometry {
     Geometry { cols, rows, cell_w: cell_w.max(1), cell_h: cell_h.max(1) }
 }
 
+/// Whether the pane reports its size in pixels yet. herdr sends it a moment after the pane starts; until then
+/// `geometry` falls back to 8 x 18 px cells.
+pub fn pixel_size_known() -> bool {
+    let mut ws: libc::winsize = unsafe { std::mem::zeroed() };
+    (unsafe { libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &mut ws) } == 0) && ws.ws_xpixel > 0 && ws.ws_ypixel > 0
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BarItem {
     pub label: &'static str,

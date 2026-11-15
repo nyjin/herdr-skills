@@ -45,7 +45,7 @@ fn markdown_page_has_csp_and_no_script_tag_of_ours() {
     let t = tempfile::tempdir().unwrap();
     let page = page_of(&write(t.path(), "doc.md", b"# Title\n\nHello *there*\n"), &rendered());
     assert!(page.contains(&format!(r#"<meta http-equiv="Content-Security-Policy" content="{CSP}">"#)));
-    assert!(page.contains("<h1>Title</h1>"));
+    assert!(page.contains(r#"<h1 id="title">Title</h1>"#));
     assert!(page.contains("<em>there</em>"));
     assert!(!page.to_ascii_lowercase().contains("<script"), "the template must not add a script");
 }
@@ -294,5 +294,18 @@ fn html_file_blocks_scripts_but_keeps_its_styles() {
         assert!(page.contains("script-src 'none'; object-src 'none'"), "{page}");
         assert!(!page.contains("default-src 'none'")); // its own stylesheet must still load
         assert!(page.contains("style.css"));
+    }
+}
+
+#[test]
+fn headings_get_github_style_ids() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("toc.md");
+    // a Korean heading keeps its letters, as on GitHub
+    std::fs::write(&file, "# Page A\n\n## The end\n\n## The end\n\n## \u{d55c}\u{ae00} \u{c81c}\u{baa9}!\n\n## Custom {#own}\n").unwrap();
+    let opts = peek::page::PageOptions { dark: true, font_px: 14.0, mode: peek::state::Mode::Rendered, line: None };
+    let page = peek::page::build(&peek::page::Doc::File(file), &opts).unwrap();
+    for id in ["page-a", "the-end", "the-end-1", "\u{d55c}\u{ae00}-\u{c81c}\u{baa9}"] {
+        assert!(page.contains(&format!("id=\"{id}\"")), "{id}: {page}");
     }
 }

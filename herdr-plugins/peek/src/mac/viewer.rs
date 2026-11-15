@@ -89,7 +89,7 @@ fn out(s: &str) {
     let _ = o.flush();
 }
 
-/// One JSON line to `$PEEK_LOG` when it is set (timings for evals).
+/// One JSON line to the viewer log (`$PEEK_LOG` or the session folder's `viewer.log`).
 fn log(mut v: serde_json::Value) {
     v["t"] = serde_json::json!((now_ms() * 10.0).round() / 10.0);
     with(|s| {
@@ -109,7 +109,11 @@ pub fn run(source: &str, path: Option<&Path>) -> io::Result<()> {
     let dpr = NSScreen::mainScreen(mtm).map(|s| s.backingScaleFactor()).unwrap_or(2.0);
     let dark = app.effectiveAppearance().name().to_string().contains("Dark");
     let base = session_base(source);
-    let log = std::env::var_os("PEEK_LOG").and_then(|p| File::options().create(true).append(true).open(p).ok());
+    // Timings and errors go to `$PEEK_LOG`, else to `viewer.log` in the session folder (started fresh each run).
+    let log = match std::env::var_os("PEEK_LOG") {
+        Some(p) => File::options().create(true).append(true).open(p).ok(),
+        None => File::create(base.join("viewer.log")).ok(),
+    };
     V.with(|v| {
         *v.borrow_mut() = Some(Viewer {
             r: Renderer::new(mtm),
@@ -257,6 +261,24 @@ fn message(lines: &[String]) {
 /// Show `item`: build its page (fetching a link first), load it, draw it. `keep_top` puts the view back where it
 /// was (reload, back, file changes).
 fn open(item: Item, mode: Mode, keep_top: Option<u64>) {
+    open_when_measured(item, mode, keep_top, 0);
+}
+
+/// The page's font size comes from the cell size, which herdr reports a moment after the pane starts: wait for
+/// it (up to a second) before the first page is built.
+fn open_when_measured(item: Item, mode: Mode, keep_top: Option<u64>, tries: u32) {
+    if !term::pixel_size_known() && tries < 20 {
+        return after(50, move || open_when_measured(item, mode, keep_top, tries + 1));
+    }
+    // The size may have arrived since the viewer measured at start: measure again before building the page.
+    if with(|v| v.g) != term::geometry() {
+        apply_geometry();
+        draw_bar();
+    }
+    open_now(item, mode, keep_top);
+}
+
+fn open_now(item: Item, mode: Mode, keep_top: Option<u64>) {
     let name = Path::new(&item.label).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or(item.label.clone());
     with(|v| {
         v.loaded = false;
@@ -301,6 +323,9 @@ fn fetch_link(url: String, fresh: bool) {
             Err(e) => fetch::error_page(&e, &t),
         };
         DispatchQueue::main().exec_async(move || {
+            // the bar names the issue, page or PR rather than the last part of its address
+            with(|v| v.title = fetched.title.clone());
+            draw_bar();
             let opts = with(|v| page_options(v, None));
             match page::build(&Doc::Fetched(fetched), &opts) {
                 Ok(html) => load_page(html),
@@ -969,11 +994,20 @@ fn read_input() {
     });
 }
 
-/// Watch the source pane's state file (every 150 ms; it is tiny) and act on each new `seq`.
+/// Watch the source pane's state file and act on each new `seq`. Its modification time is checked every 30 ms
+/// (a click should show at once) and the file is read only when that changes.
 fn follow_state(source: String) {
     std::thread::spawn(move || {
+        let path = state::state_file(&source, ".json");
         let mut last: Option<u128> = None;
+        let mut stamp = None;
         loop {
+            let now = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+            if now == stamp && last.is_some() {
+                std::thread::sleep(Duration::from_millis(30));
+                continue;
+            }
+            stamp = now;
             if let Some(st) = state::read_state(&source) {
                 if last != Some(st.seq) {
                     let first = last.is_none();
@@ -981,7 +1015,7 @@ fn follow_state(source: String) {
                     DispatchQueue::main().exec_async(move || on_state(st, first));
                 }
             }
-            std::thread::sleep(Duration::from_millis(150));
+            std::thread::sleep(Duration::from_millis(30));
         }
     });
 }
@@ -1003,8 +1037,12 @@ fn on_state(st: ViewState, first: bool) {
             for (n, item) in st.items.iter().take(9).enumerate() {
                 lines.push(format!("{}  {}", n + 1, item.label));
             }
+            with(|v| {
+                v.choices = st.items.clone();
+                v.title = "Choose a file".into();
+            });
+            draw_bar();
             message(&lines);
-            with(|v| v.choices = st.items.clone());
         }
     }
 }

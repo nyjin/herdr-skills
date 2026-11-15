@@ -56,7 +56,7 @@ pub fn state_dir() -> PathBuf {
 }
 
 /// `<state dir>/<source><ext>`.
-pub(crate) fn state_file(source: &str, ext: &str) -> PathBuf {
+pub fn state_file(source: &str, ext: &str) -> PathBuf {
     state_dir().join(format!("{}{ext}", source.replace('/', "_")))
 }
 
