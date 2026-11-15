@@ -59,7 +59,7 @@ herdr plugin install nyjin/herdr-skills/herdr-plugins/peek   # install
 herdr plugin uninstall nyjin.peek                            # remove
 ```
 
-From a checkout of this repository, `herdr plugin link herdr-plugins/peek` links the plugin.
+From the root of a checkout of this repository, `herdr plugin link "$PWD/herdr-plugins/peek"` links the plugin.
 
 Up to 0.3.0 the plugin was called glow-preview (`nyjin.glow-preview`). If you installed it, remove it with `herdr plugin uninstall nyjin.glow-preview`, then install peek.
 

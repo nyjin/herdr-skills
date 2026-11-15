@@ -59,7 +59,7 @@ herdr plugin install nyjin/herdr-skills/herdr-plugins/peek   # 설치
 herdr plugin uninstall nyjin.peek                            # 제거
 ```
 
-이 저장소를 받아 둔 곳에서 바로 쓰려면 `herdr plugin link herdr-plugins/peek`으로 붙인다.
+이 저장소를 받아 둔 곳에서 바로 쓰려면 저장소 루트에서 `herdr plugin link "$PWD/herdr-plugins/peek"`로 붙인다.
 
 0.3.0까지는 이름이 glow-preview(`nyjin.glow-preview`)였다. 그 버전을 설치해 두었다면 `herdr plugin uninstall nyjin.glow-preview`로 지운 뒤 새로 설치한다.
 
