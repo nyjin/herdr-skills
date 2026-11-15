@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install skills from nyjin/herdr-skills individually (without the Claude Code plugin).
+# Install skills from nyjin/herdr-skills individually.
 #
 # Usage:
 #   ./install.sh <skill>...            install the named skills

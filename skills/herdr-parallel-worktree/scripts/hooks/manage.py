@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
-"""Turn herdr-parallel-worktree's hooks (PreToolUse, PostToolUse, PostToolUseFailure, SessionStart) on or off, or remove them.
+"""Turn herdr-parallel-worktree's hooks on or off, or remove them.
 
 Usage: manage.py <on|off|remove|status> --skill-dir <skill directory as installed>
 
-- Plugin installs (the skill lives under ~/.claude/plugins/): the plugin's hooks/hooks.json is active by
-  default. on/off only flip "hooks" in DATA_DIR/config.json; the hook scripts read it and stay silent when
-  "off". remove behaves like off, because a plugin's hooks cannot be removed per user without disabling
-  the plugin.
-- Other installs (~/.claude/skills, gh skill, npx skills): on also registers the hooks in
-  ~/.claude/settings.json; remove unregisters them. A backup of settings.json is written before any change.
+- on: registers the hooks in ~/.claude/settings.json, replacing an earlier registration (so it also picks up hook
+  events an update added), and sets "hooks": "on" in DATA_DIR/config.json.
+- off: sets "hooks": "off". The hooks stay registered; the hook scripts read the switch and stay silent.
+- remove: sets "off" and unregisters the hooks from ~/.claude/settings.json.
+A backup of settings.json is written before any change to it.
 
 Prints a JSON summary. Exits 1 with a message on stderr on failure.
 """
@@ -141,12 +140,11 @@ def main():
     p.add_argument("--skill-dir", required=True)
     a = p.parse_args()
     skill_dir = os.path.abspath(os.path.expanduser(a.skill_dir))
-    plugin = f"{os.sep}.claude{os.sep}plugins{os.sep}" in skill_dir
-    out = {"install": "plugin" if plugin else "standalone", "config": data_config()}
+    out = {"config": data_config()}
 
     if a.action in ("on", "off", "remove"):
         set_mode("on" if a.action == "on" else "off")
-    if not plugin and a.action in ("on", "remove"):
+    if a.action in ("on", "remove"):
         settings = read_json(SETTINGS, {})
         if not isinstance(settings, dict):
             die(f"{SETTINGS} must contain a JSON object")
@@ -158,12 +156,10 @@ def main():
         if a.action == "on" or removed:
             out["settings_backup"] = save_settings(settings)
         out["settings"] = SETTINGS
-    if plugin and a.action == "remove":
-        out["note"] = "plugin hooks stay installed but are now silent; disable the plugin to remove them entirely"
 
     cfg = read_json(data_config(), {})
     out["mode"] = cfg.get("hooks", "on") if isinstance(cfg, dict) else "on"
-    out["registered_in_settings"] = None if plugin else registered()
+    out["registered_in_settings"] = registered()
     print(json.dumps(out, ensure_ascii=False, indent=2))
 
 

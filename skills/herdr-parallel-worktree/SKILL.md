@@ -29,7 +29,7 @@ This skill assumes the official `herdr` skill for CLI basics (read sources, stat
 | `hooks` | `"on"` | `"on"` or `"off"`: whether the routing hook acts (see Hooks below) |
 | `dispatchSkills` | `["superpowers:subagent-driven-development", "superpowers:dispatching-parallel-agents"]` | Array of skill names that hand each task to an agent. Loading one points the main session to `references/dispatch.md` (see Hooks below) |
 
-Every key is optional. The skill runs on the defaults without asking anything, so it works the same whether it was installed as a plugin, as a standalone skill, or driven from elsewhere; the user changes settings only when they want to.
+Every key is optional. The skill runs on the defaults without asking anything, so it works the same however it was installed or driven; the user changes settings only when they want to.
 
 The worker brief template is not in `config.json`; it is a file. Its lookup order, filling rules and how to change it are in `references/brief-filling.md`. When the user says "change the brief template", "show the template" or "reset the template", follow section 5 of that document.
 
@@ -46,7 +46,7 @@ Every started worker is also recorded in `DATA_DIR/runs.json` by `scripts/runs.p
 
    Then tell the user, in a few lines of their language, which settings exist, so they know what they can change later:
    - the saved path, and that workers run with `workerArgs: []` (each worker's own Claude Code permission settings). To change it, edit the file or say e.g. "run workers with `--enable-auto-mode`" (a classifier asks for approval only on risky actions) or "`--dangerously-skip-permissions`" (no approvals; trusted repositories only)
-   - the routing hook (see Hooks below) and its current state from `manage.py status`: on for plugin installs; for other installs not registered until the user says "turn on the herdr hook"
+   - the routing hook (see Hooks below) and its current state from `manage.py status`: not registered until the user says "turn on the herdr hook"
    - "Worker briefs use the default template. To lock in your own steps and rules, say 'change the brief template'." Without this line the user has no way of knowing the template can be changed.
 
    The file now exists, so this notice appears only once.
@@ -75,13 +75,13 @@ This skill's description is kept short on purpose: it sits in every session's co
 
 Every handoff carries `owner:`, and step 0 ("Receiving a handoff") routes by it. The hooks decide from tool calls and their effects, never from prompt wording; the one exception is whether a prompt starts with `/<skill>` for a skill in `dispatchSkills`. Outside herdr a shell guard returns before python starts; inside herdr, the hooks that fire on every edit and Bash command return before any work for the main session itself, and the one that fires on every prompt returns unless the prompt starts with `/`.
 
-Plugin installs ship it in the plugin's `hooks/hooks.json`, active by default. Other installs leave it unregistered until the user asks for it, because registering it edits `~/.claude/settings.json`; `scripts/hooks/manage.py on` registers it there. Those registered entries are a copy, so after updating a non-plugin install run `on` again to pick up changed hook events. When the user asks to turn the hook on or off, remove it, or check it ("turn off the herdr hooks", or the same in the user's language), run:
+The hook stays unregistered until the user asks for it, because registering it edits `~/.claude/settings.json`; `scripts/hooks/manage.py on` registers it there. Those registered entries are a copy, so after updating the skill run `on` again to pick up changed hook events. When the user asks to turn the hook on or off, remove it, or check it ("turn off the herdr hooks", or the same in the user's language), run:
 
 ```bash
 python3 "<skill directory>/scripts/hooks/manage.py" <on|off|remove|status> --skill-dir "<skill directory>"
 ```
 
-Before `on` or `remove` on a non-plugin install, tell the user it edits `~/.claude/settings.json` (a backup is written first). For plugin installs, `remove` can only silence the hook; removing it entirely means disabling the plugin. Installing the hooks was the user's decision: inside herdr, work handed to another agent runs as a visible worker. So when a hook routes something here or to `references/dispatch.md`, carry on with it; do not ask whether to bypass it, and do not suggest `! <command>` or turning the hooks off. A worktree for this session is `EnterWorktree`, which the hooks already show in the sidebar. Talk about turning the hooks off only when the user asks about the hooks themselves. When a subagent reports that it was blocked or returns a `HERDR-HANDOFF` block, take it over with this skill (step 0, "Receiving a handoff").
+Before `on` or `remove`, tell the user it edits `~/.claude/settings.json` (a backup is written first). Installing the hooks was the user's decision: inside herdr, work handed to another agent runs as a visible worker. So when a hook routes something here or to `references/dispatch.md`, carry on with it; do not ask whether to bypass it, and do not suggest `! <command>` or turning the hooks off. A worktree for this session is `EnterWorktree`, which the hooks already show in the sidebar. Talk about turning the hooks off only when the user asks about the hooks themselves. When a subagent reports that it was blocked or returns a `HERDR-HANDOFF` block, take it over with this skill (step 0, "Receiving a handoff").
 
 ## 0. Preconditions
 

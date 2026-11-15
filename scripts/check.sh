@@ -4,7 +4,7 @@
 # Usage: scripts/check.sh [check ...]     no argument runs every check, in order
 #        scripts/check.sh --list          print the check names
 #
-# Checks: skill-spec names readme manifests finalize-brief hooks runs unit
+# Checks: skill-spec names readme finalize-brief hooks runs unit
 # Errors are printed as GitHub annotations (::error ...), which read fine in a terminal too.
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
@@ -12,7 +12,7 @@ cd "$(dirname "$0")/.." || exit 1
 # HERDR_PW_WORKER would make every simulated caller a worker; drop it, and the tab's workspace with it.
 unset HERDR_PW_WORKER HERDR_WORKSPACE_ID
 
-CHECKS=(skill-spec names readme manifests finalize-brief hooks runs unit)
+CHECKS=(skill-spec names readme finalize-brief hooks runs unit)
 TMP="${RUNNER_TEMP:-$(mktemp -d)}"
 SKILL=skills/herdr-parallel-worktree
 
@@ -53,27 +53,26 @@ check_names() {
   return "$fail"
 }
 
-# The skills tables between <!-- skills:start --> and <!-- skills:end --> list exactly the skills/ directories.
+# Each README's tables list exactly what the repository holds: the rows between <!-- skills:start --> and
+# <!-- skills:end --> are the skills/ directories, those between <!-- herdr-plugins:start --> and
+# <!-- herdr-plugins:end --> the herdr-plugins/ directories.
 check_readme() {
-  local fail=0 dirs readme table
-  dirs=$(find skills -mindepth 2 -maxdepth 2 -name SKILL.md | cut -d/ -f2 | sort)
-  for readme in README.md README.ko.md; do
-    table=$(awk '/<!-- skills:start -->/{f=1;next} /<!-- skills:end -->/{if(f)exit} f' "$readme" \
-      | sed -nE 's/^\| *\[?`([a-z0-9][a-z0-9-]*)`\]?.*/\1/p' | sort)
-    if [ "$table" != "$dirs" ]; then
-      echo "::error file=${readme}::${readme} table ($(echo $table)) != skills/ ($(echo $dirs))"; fail=1
+  local fail=0 readme kind dirs table
+  for kind in skills herdr-plugins; do
+    if [ "$kind" = skills ]; then
+      dirs=$(find skills -mindepth 2 -maxdepth 2 -name SKILL.md | cut -d/ -f2 | sort)
+    else
+      dirs=$(find herdr-plugins -mindepth 2 -maxdepth 2 -name herdr-plugin.toml | cut -d/ -f2 | sort)
     fi
+    for readme in README.md README.ko.md; do
+      table=$(awk -v s="<!-- ${kind}:start -->" -v e="<!-- ${kind}:end -->" '$0==s{f=1;next} $0==e{if(f)exit} f' "$readme" \
+        | sed -nE 's/^\| *\[?`([a-z0-9][a-z0-9-]*)`\]?.*/\1/p' | sort)
+      if [ "$table" != "$dirs" ]; then
+        echo "::error file=${readme}::${readme} ${kind} table ($(echo $table)) != ${kind}/ ($(echo $dirs))"; fail=1
+      fi
+    done
   done
   return "$fail"
-}
-
-check_manifests() {
-  local f
-  for f in .claude-plugin/plugin.json .claude-plugin/marketplace.json; do
-    jq -e . "$f" >/dev/null || { echo "::error file=${f}::not valid JSON"; return 1; }
-  done
-  [ "$(jq -r .name .claude-plugin/plugin.json)" = "$(jq -r '.plugins[0].name' .claude-plugin/marketplace.json)" ] \
-    || { echo "::error::plugin.json name != marketplace.json plugins[0].name"; return 1; }
 }
 
 # An unfilled template must be rejected; a filled brief gets the closing paragraph appended.
@@ -94,8 +93,6 @@ check_finalize_brief() {
 # before any work for the plain main session's Bash, and tells a session started inside herdr its role.
 check_hooks() {
   local r="$SKILL/scripts/hooks/route.py" data ev post
-  jq -e '.hooks.PreToolUse and .hooks.PostToolUse and .hooks.PostToolUseFailure and .hooks.SessionStart and .hooks.UserPromptSubmit' \
-    hooks/hooks.json >/dev/null || { echo "::error file=hooks/hooks.json::unexpected hook events"; return 1; }
   data=$(mktemp -d)
   pre() { printf '{"hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Bash","tool_input":{"command":%s}}' "$PWD" "$1"; }
   ev=$(pre '"git worktree add ../x -b x"')
@@ -137,14 +134,15 @@ check_runs() {
     || { echo "::error::runs.py show on an empty registry should print []"; return 1; }
 }
 
-# Unit tests (tests/test_*.py). The live_*.py and hook_cost.py scripts start claude and are run by hand.
+# Unit tests (tests/test_*.py) of every skill and herdr plugin, each run from its own directory. The live_*.py and
+# hook_cost.py scripts start claude and are run by hand.
 check_unit() {
-  python3 -m unittest discover -s "$SKILL/tests" || { echo "::error::unit tests failed"; return 1; }
-  local plugin
-  for plugin in herdr-plugins/*/; do
-    [ -d "${plugin}tests" ] || continue
-    (cd "$plugin" && python3 -m unittest discover -s tests) || { echo "::error::${plugin} unit tests failed"; return 1; }
+  local unit fail=0
+  for unit in skills/*/ herdr-plugins/*/; do
+    [ -d "${unit}tests" ] || continue
+    (cd "$unit" && python3 -m unittest discover -s tests) || { echo "::error::${unit} unit tests failed"; fail=1; }
   done
+  return "$fail"
 }
 
 run_check() {

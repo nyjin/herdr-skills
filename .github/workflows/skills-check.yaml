@@ -24,11 +24,8 @@ jobs:
       - name: SKILL.md name matches directory
         run: scripts/check.sh names
 
-      - name: README skills tables match skills/
+      - name: README tables match skills/ and herdr-plugins/
         run: scripts/check.sh readme
-
-      - name: Validate plugin manifests
-        run: scripts/check.sh manifests
 
       - name: finalize-brief.py smoke test
         run: scripts/check.sh finalize-brief

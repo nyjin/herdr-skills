@@ -2,7 +2,7 @@
 
 **English** | [한국어](README.ko.md)
 
-Claude Code skills (Agent Skills) for [herdr](https://herdr.dev), the agent multiplexer that lives in your terminal. Run parallel coding agents in separate git worktrees and watch every Claude Code worker from the herdr sidebar — instead of invisible subagents. Install them all as a Claude Code plugin, or pick individual skills with `gh skill` or `npx skills`.
+Agent Skills and herdr plugins for [herdr](https://herdr.dev), the agent multiplexer that lives in your terminal. Run parallel coding agents in separate git worktrees and watch every Claude Code worker from the herdr sidebar, instead of invisible subagents; read what a Claude pane points at in the pane beside it. Each one installs on its own: skills with `gh skill` or `npx skills`, herdr plugins with `herdr plugin install`.
 
 ## Skills
 
@@ -14,32 +14,7 @@ To install one skill, put its name from the table below in `<skill>`.
 | [`herdr-parallel-worktree`](skills/herdr-parallel-worktree/SKILL.md) | Hands coding work inside herdr to visible workers, one git worktree and one `claude` worker per task, so you can watch each from the sidebar and step in. Each worker lands under its repository's space (as a workspace named after the task), or as a tab in your current space when herdr shows no space for that repository, never in a new top-level space. Works for a single ticket you want to review before the PR as well as several tasks in parallel, and leaves the tabs your herdr plugins lay out in place. Workers get a brief built from a customizable template; it runs on sensible defaults and the first run lists the settings you can change. Finished workers can be cleaned up and resumed later by name, conversation included. |
 <!-- skills:end -->
 
-## herdr plugins
-
-Plugins for herdr itself, installed with `herdr plugin install`, not through Claude Code.
-
-| Plugin | Description |
-|---|---|
-| [`glow-preview`](herdr-plugins/glow-preview/README.md) | Click a markdown or source path, or a Jira, Confluence or GitHub PR link, in a Claude Code pane to read it in a pane to its right: markdown rendered with glow (switchable to source with bat), source with bat, links fetched through acli / jira-cli / cme / gh, with Atlassian MCP as the last resort. Nothing opens without a click. |
-
-```sh
-herdr plugin install nyjin/herdr-skills/herdr-plugins/glow-preview
-```
-
-## Install
-
-Pick **one** of the two routes below. **Do not use both.** Plugin skills load as `/herdr-skills:<skill>` and individual installs as `/<skill>`; neither replaces the other, so installing the same skill both ways leaves two copies that trigger twice. To switch to individual installs, remove the plugin first with `/plugin uninstall herdr-skills@herdr-skills`.
-
-### All skills — Claude Code plugin
-
-```
-/plugin marketplace add nyjin/herdr-skills
-/plugin install herdr-skills@herdr-skills
-```
-
-Restart Claude Code afterwards.
-
-### Individual skills
+### Install
 
 `install.sh` uses `gh skill` when your GitHub CLI has it (2.90.0+) and falls back to `npx skills` otherwise.
 
@@ -66,34 +41,33 @@ npx skills add nyjin/herdr-skills -s herdr-parallel-worktree -a claude-code -g
 
 Always pass `--agent claude-code --scope user` to `gh skill install`; without them it installs for GitHub Copilot at project scope. `gh skill update` updates installs later.
 
-### What each route installs
-
 | Route | Installs |
 |---|---|
 | `gh skill install` | the latest tagged release, or the default branch if there is none |
 | `gh skill install ... --pin <tag>` | a fixed release (excluded from `gh skill update`) |
 | `npx skills add` | the default branch |
-| Claude Code plugin | the marketplace's current plugin version |
 
-## Requirements
+Earlier versions were also a Claude Code plugin (`herdr-skills@herdr-skills`); that plugin is gone. If you installed it, remove it first with `/plugin uninstall herdr-skills@herdr-skills` and `/plugin marketplace remove herdr-skills`, then install the skill as above and ask Claude to "turn on the herdr hook".
 
-- [herdr](https://herdr.dev) — the skills only run inside a herdr session (`HERDR_ENV=1`)
+### Requirements
+
+- [herdr](https://herdr.dev): the skills only run inside a herdr session (`HERDR_ENV=1`)
 - `claude` (Claude Code), `git`, `jq`, `python3`
 
-## Hooks
+### Hooks
 
-`herdr-parallel-worktree` keeps its skill description short, because every Claude Code session carries it — including sessions outside herdr. Hooks make it reliable instead. They only act inside herdr (`HERDR_ENV=1`):
+`herdr-parallel-worktree` keeps its skill description short, because every Claude Code session carries it, including sessions outside herdr. Hooks make it reliable instead. They only act inside herdr (`HERDR_ENV=1`):
 
-- **SessionStart** — each session starts with one short paragraph naming its role: your main session is the orchestrator, which hands off every task, even a single ticket, as a worker you can watch (and treats another skill's "dispatch a subagent per ticket" as a worker); a worker learns its name and that anything outside its worktree goes back as a handoff.
-- **Your session's own worktree** — `EnterWorktree` is not blocked, for when you want this session itself to move into a worktree. Claude Code creates it as it always does (`.claude/worktrees/<name>` on branch `worktree-<name>`), and a PostToolUse hook then opens it in the herdr sidebar under its repository's space and tells the session its label (when herdr shows no space for that repository it opens nothing, and the session stays in its own tab); when `ExitWorktree` removes it, the hook closes that workspace. A detached `git worktree add` (a checkout for reading) passes too; any other `git worktree add` from the main session is denied with the same guidance: work on a task goes to a worker, whose worktree follows the repository's conventions. A worktree from `claude --worktree` at launch does not appear in the sidebar, since no tool call creates it.
-- **PreToolUse** — handing work to an agent in its own worktree goes through the skill: a worktree-isolated subagent from the main session is denied and sent to the skill, a subagent that tries to create a worktree is told to stop and hand the task back as a `HERDR-HANDOFF` block, and a worker started by the skill is told to do the work itself. Entering an existing worktree with `EnterWorktree` is allowed. A subagent's or worker's file edit outside its own worktree is stopped the same way, naming who owns that place.
-- **PostToolUse** — after a subagent's or worker's Bash command, if the command named a path in another worktree and something there actually changed while it ran, it is told to stop and hand that part back. Reads are fine. When the main session starts a subagent, one line tells it how to handle a returned `HERDR-HANDOFF` block.
+- **SessionStart**: each session starts with one short paragraph naming its role: your main session is the orchestrator, which hands off every task, even a single ticket, as a worker you can watch (and treats another skill's "dispatch a subagent per ticket" as a worker); a worker learns its name and that anything outside its worktree goes back as a handoff.
+- **Your session's own worktree**: `EnterWorktree` is not blocked, for when you want this session itself to move into a worktree. Claude Code creates it as it always does (`.claude/worktrees/<name>` on branch `worktree-<name>`), and a PostToolUse hook then opens it in the herdr sidebar under its repository's space and tells the session its label (when herdr shows no space for that repository it opens nothing, and the session stays in its own tab); when `ExitWorktree` removes it, the hook closes that workspace. A detached `git worktree add` (a checkout for reading) passes too; any other `git worktree add` from the main session is denied with the same guidance: work on a task goes to a worker, whose worktree follows the repository's conventions. A worktree from `claude --worktree` at launch does not appear in the sidebar, since no tool call creates it.
+- **PreToolUse**: handing work to an agent in its own worktree goes through the skill: a worktree-isolated subagent from the main session is denied and sent to the skill, a subagent that tries to create a worktree is told to stop and hand the task back as a `HERDR-HANDOFF` block, and a worker started by the skill is told to do the work itself. Entering an existing worktree with `EnterWorktree` is allowed. A subagent's or worker's file edit outside its own worktree is stopped the same way, naming who owns that place.
+- **PostToolUse**: after a subagent's or worker's Bash command, if the command named a path in another worktree and something there actually changed while it ran, it is told to stop and hand that part back. Reads are fine. When the main session starts a subagent, one line tells it how to handle a returned `HERDR-HANDOFF` block.
 
 Every handoff names an **owner**, and the main session routes it: to the worker that owns that worktree (as a follow-up, reopening or resuming that worker if needed), to you when it is your main checkout (it tells you what changed and asks), or to a new worker, started right away and reported afterwards. The hooks judge tool calls and their effects, never the wording of a prompt. Outside herdr they return before python starts; for the plain main session, the hooks on every edit and Bash command stop before doing any work.
 
-The plugin ships it in `hooks/hooks.json`, on by default. Individual installs leave it off until you ask Claude to "turn on the herdr hook", since that registers it in `~/.claude/settings.json` (a backup is written first). The registered entries are a copy, so after updating an individual install, ask once more to turn the hook on so that new hook events are registered. Either way you can later ask Claude to turn it off, on, or remove it.
+The hooks are off until you ask Claude to "turn on the herdr hook", since that registers them in `~/.claude/settings.json` (a backup is written first). The registered entries are a copy, so after updating the skill, ask once more so that new hook events are registered. You can later ask Claude to turn them off, on, or remove them.
 
-## Settings and data
+### Settings and data
 
 Per-user settings live outside the skill directory, so they survive reinstalls and updates:
 
@@ -103,14 +77,46 @@ ${HERDR_SKILLS_DATA_HOME:-~/.local/share/herdr-skills}/<skill>/
 
 `herdr-parallel-worktree` keeps `config.json` (worker `claude` flags and the hook switch; written with defaults on the first run, and you can edit it or ask Claude to change it), `briefs/` (generated worker briefs), `runs.json` (started workers and their Claude session IDs, used for cleanup and resume) and an optional `brief-template.md` (your own brief template) there. Ask Claude to "change the brief template" to customize it.
 
-## Adding a skill
+## herdr plugins
+
+Plugins for herdr itself, installed with `herdr plugin install`, not through Claude Code.
+
+<!-- herdr-plugins:start -->
+| Plugin | Description |
+|---|---|
+| [`glow-preview`](herdr-plugins/glow-preview/README.md) | Click a markdown or source path, or a Jira, Confluence or GitHub PR link, in a Claude Code pane to read it in a pane to its right: markdown rendered with glow (switchable to source with bat), source with bat, links fetched through acli / jira-cli / cme / gh, with Atlassian MCP as the last resort. Nothing opens without a click. |
+<!-- herdr-plugins:end -->
+
+```sh
+herdr plugin install nyjin/herdr-skills/herdr-plugins/glow-preview
+```
+
+## Repository layout
+
+| Path | What |
+|---|---|
+| `skills/<name>/` | one Agent Skill: `SKILL.md`, `references/`, `assets/`, `scripts/`, and its `tests/` |
+| `herdr-plugins/<name>/` | one herdr plugin: `herdr-plugin.toml`, its scripts, `README.md` / `README.ko.md`, and its `tests/` |
+| `docs/superpowers/` | design documents (`specs/`) and implementation plans (`plans/`) |
+| `scripts/check.sh` | every repository check, run the same way locally and in CI |
+| `install.sh` | installs skills individually |
+
+## Contributing
+
+All text in the repository is English. Korean appears only in the `README.ko.md` files and, where it does a job, in tests (for example patterns that match Korean model replies).
+
+### Adding a skill
 
 1. Create `skills/<name>/SKILL.md`. The frontmatter `name` must equal the directory name and use only lowercase letters, digits and hyphens.
 2. Add a row to the Skills table in both `README.md` and `README.ko.md`, between the `skills:start` and `skills:end` markers, in alphabetical order.
-3. Bump `version` in `.claude-plugin/plugin.json`.
-4. After merging, publish a release so `gh skill` users get the change: `gh skill publish --tag v<version>`.
+3. After merging, publish a release so `gh skill` users get the change: `gh skill publish --tag v<version>`. The release tag is the skills' version.
 
-CI (`.github/workflows/skills-check.yaml`) validates the skills with `gh skill publish --dry-run`, checks that each `name` matches its directory, checks both READMEs' tables against `skills/`, and runs the plugin manifest validation.
+### Adding a herdr plugin
+
+1. Create `herdr-plugins/<name>/` with its `herdr-plugin.toml` (its version lives there), a `README.md` and a `README.ko.md`.
+2. Add a row to the herdr plugins table in both READMEs, between the `herdr-plugins:start` and `herdr-plugins:end` markers, in alphabetical order.
+
+CI (`.github/workflows/skills-check.yaml`) runs `scripts/check.sh`: it validates the skills with `gh skill publish --dry-run`, checks that each `name` matches its directory, checks both READMEs' tables against `skills/` and `herdr-plugins/`, and runs the smoke and unit tests.
 
 ## License
 

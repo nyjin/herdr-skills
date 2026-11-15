@@ -2,7 +2,7 @@
 """Measure the routing hooks' cost per call (spec §6, §12.4; plan Task 4 L2c). Usage (repo root):
 python3 skills/herdr-parallel-worktree/tests/hook_cost.py
 
-Runs the registered commands from hooks/hooks.json through `sh -c`, as Claude Code does, against a scratch
+Runs the commands manage.py registers through `sh -c`, as Claude Code does, against a scratch
 repository with 3000 files and one linked worktree. Prints PASS/FAIL per line; exits 1 on any FAIL.
 """
 import json
@@ -13,14 +13,15 @@ import sys
 import tempfile
 import time
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-with open(os.path.join(ROOT, "hooks", "hooks.json")) as f:
-    HOOKS = json.load(f)["hooks"]
+SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(SKILL_DIR, "scripts", "hooks"))
+import manage  # noqa: E402
+
+HOOKS = manage.hook_entries(SKILL_DIR)
 
 
 def command(event, matcher):
-    cmd = next(g for g in HOOKS[event] if g.get("matcher") == matcher)["hooks"][0]["command"]
-    return cmd.replace("${CLAUDE_PLUGIN_ROOT}", ROOT)
+    return next(g for g in HOOKS[event] if g.get("matcher") == matcher)["hooks"][0]["command"]
 
 
 def ms(cmd, event, env, n=15):
