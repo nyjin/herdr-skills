@@ -5,8 +5,10 @@ use super::render::{after, Renderer};
 use crate::kitty::{self, Geometry, TILE_BUDGET};
 use crate::page::{self, Doc, PageOptions};
 use crate::state::{self, Item, Mode, ViewState};
+use crate::fetch::{self, Endpoints};
+use crate::script::FindQuery;
 use crate::term::{self, Input, Key, MouseKind};
-use crate::{herdr, script};
+use crate::{herdr, script, target};
 use dispatch2::DispatchQueue;
 use objc2::MainThreadMarker;
 use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSScreen};
@@ -22,9 +24,17 @@ use std::time::{Duration, Instant};
 const BAR_ROW: u16 = 1;
 const FIRST_ROW: u16 = 2;
 const NOTCH: i64 = 3;
+const ZOOM_STEP: u32 = 10;
+
+struct Find {
+    q: FindQuery,
+    count: i64,
+    index: i64,
+    /// Typing goes into the query; otherwise `n`/`N` step and other keys work as usual.
+    editing: bool,
+}
 
 struct Viewer {
-    source: String,
     r: Renderer,
     g: Geometry,
     dpr: f64,
@@ -44,8 +54,13 @@ struct Viewer {
     mode: Mode,
     zoom: u32,
     dark: bool,
-    pages: PathBuf,
+    /// `/tmp/peek-<uid>/<project>/<session>`: pages, browser copies and screenshots live under it.
+    base: PathBuf,
     page_file: Option<PathBuf>,
+    find: Option<Find>,
+    history: Vec<(Item, Mode, u64)>,
+    keep_top: Option<u64>,
+    watcher: Option<super::watch::Watcher>,
     seq: u128,
     hover: Option<usize>,
     bar: Vec<(u16, u16)>,
@@ -92,11 +107,10 @@ pub fn run(source: &str, path: Option<&Path>) -> io::Result<()> {
     app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
     let dpr = NSScreen::mainScreen(mtm).map(|s| s.backingScaleFactor()).unwrap_or(2.0);
     let dark = app.effectiveAppearance().name().to_string().contains("Dark");
-    let pages = pages_dir(source);
+    let base = session_base(source);
     let log = std::env::var_os("PEEK_LOG").and_then(|p| File::options().create(true).append(true).open(p).ok());
     V.with(|v| {
         *v.borrow_mut() = Some(Viewer {
-            source: source.to_string(),
             r: Renderer::new(mtm),
             g: term::geometry(),
             dpr,
@@ -116,8 +130,12 @@ pub fn run(source: &str, path: Option<&Path>) -> io::Result<()> {
             mode: Mode::Rendered,
             zoom: state::zoom(),
             dark,
-            pages,
+            base,
             page_file: None,
+            find: None,
+            history: Vec::new(),
+            keep_top: None,
+            watcher: None,
             seq: 0,
             hover: None,
             bar: Vec::new(),
@@ -132,7 +150,7 @@ pub fn run(source: &str, path: Option<&Path>) -> io::Result<()> {
     let zoom = with(|v| v.zoom);
     with(|v| v.r.set_zoom(zoom));
     match path {
-        Some(p) => open(Item { label: p.display().to_string(), path: Some(p.to_path_buf()), url: None, line: None }, Mode::Rendered),
+        Some(p) => open(Item { label: p.display().to_string(), path: Some(p.to_path_buf()), url: None, line: None }, Mode::Rendered, None),
         None => {
             out("\x1b[3;3HWaiting for a click in the Claude pane ...");
             follow_state(source.to_string());
@@ -143,15 +161,18 @@ pub fn run(source: &str, path: Option<&Path>) -> io::Result<()> {
     Ok(())
 }
 
-/// `<session dir>/pages`, or a folder under the temp dir when the session folder cannot be made.
-fn pages_dir(source: &str) -> PathBuf {
+/// The session folder (`/tmp/peek-<uid>/<project>/<session>`) for the source pane, or a private folder under the
+/// temp dir when it cannot be made; `pages/`, `browser/` and `screenshots/` are created in it.
+fn session_base(source: &str) -> PathBuf {
     let dir = herdr::pane_get(source).ok().and_then(|p| {
         let project = state::project_name(p.foreground_cwd.as_deref().unwrap_or(&p.cwd));
         let session = p.session_id.unwrap_or_else(|| format!("pane-{}", source.replace(':', "-")));
         state::session_dir(&project, &session).ok()
     });
-    let dir = dir.unwrap_or_else(|| std::env::temp_dir().join("peek-pages")).join("pages");
-    let _ = std::fs::create_dir_all(&dir);
+    let dir = dir.unwrap_or_else(|| std::env::temp_dir().join(format!("peek-{}", std::process::id())));
+    for sub in ["pages", "browser", "screenshots"] {
+        let _ = std::fs::create_dir_all(dir.join(sub));
+    }
     dir
 }
 
@@ -193,6 +214,11 @@ fn apply_geometry() {
 }
 
 fn draw_bar() {
+    let finding = with(|v| v.find.as_ref().map(|f| term::render_find(&f.q, f.count, f.index, v.g.cols)));
+    if let Some(row) = finding {
+        let cursor = with(|v| v.find.as_ref().is_some_and(|f| f.editing));
+        return out(&format!("{row}{}", if cursor { "\x1b[1;8H" } else { "" }));
+    }
     let (text, ranges) = with(|v| term::render_bar(&v.title, v.zoom, v.g.cols, v.hover));
     with(|v| v.bar = ranges);
     out(&text);
@@ -226,32 +252,68 @@ fn message(lines: &[String]) {
     out(&s);
 }
 
-/// Show `item`: build its page, load it, draw it.
-fn open(item: Item, mode: Mode) {
+/// Show `item`: build its page (fetching a link first), load it, draw it. `keep_top` puts the view back where it
+/// was (reload, back, file changes).
+fn open(item: Item, mode: Mode, keep_top: Option<u64>) {
     let name = Path::new(&item.label).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or(item.label.clone());
     with(|v| {
         v.loaded = false;
-        v.generation += 1;
-        v.ready.clear();
         v.mode = mode;
         v.title = name.clone();
         v.choices.clear();
+        v.find = None;
+        v.keep_top = keep_top;
         v.item = Some(item.clone());
+        v.watcher = None;
     });
     draw_bar();
-    message(&[format!("Loading {name} ...")]);
-    let Some(path) = item.path.clone() else {
-        // Jira, Confluence and PR links are fetched in the next step of the plan.
-        return message(&[format!("Cannot show {} yet", item.url.unwrap_or_default())]);
-    };
-    let (opts, pages, marker) = with(|v| {
-        v.marker += 1;
-        (page_options(v, item.line), v.pages.clone(), v.marker)
+    if keep_top.is_none() {
+        message(&[format!("Loading {name} ...")]);
+    }
+    if let Some(path) = item.path.clone() {
+        let opts = with(|v| page_options(v, item.line));
+        let built = page::build(&Doc::File(path.clone()), &opts);
+        let watched = path.clone();
+        let w = super::watch::watch(&path, move || {
+            let p = watched.clone();
+            DispatchQueue::main().exec_async(move || file_changed(&p));
+        });
+        with(|v| v.watcher = w.ok());
+        return match built {
+            Ok(html) => load_page(html),
+            Err(e) => message(&[format!("Cannot show {}: {e}", path.display())]),
+        };
+    }
+    let Some(url) = item.url.clone() else { return message(&["Nothing to show".into()]) };
+    fetch_link(url, false);
+}
+
+/// Fetch a Jira, Confluence or PR link off the main thread, then show it (an error page when it fails).
+fn fetch_link(url: String, fresh: bool) {
+    let cache = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default().join(".cache/peek/links");
+    let _ = std::fs::create_dir_all(&cache);
+    std::thread::spawn(move || {
+        let t = target::classify(&url);
+        let fetched = match fetch::fetch(&t, &super::keychain::Keychain, &cache, fresh, &Endpoints::default()) {
+            Ok(f) => f,
+            Err(e) => fetch::error_page(&e, &t),
+        };
+        DispatchQueue::main().exec_async(move || {
+            let opts = with(|v| page_options(v, None));
+            match page::build(&Doc::Fetched(fetched), &opts) {
+                Ok(html) => load_page(html),
+                Err(e) => message(&[format!("Cannot show {url}: {e}")]),
+            }
+        });
     });
-    let html = match page::build(&Doc::File(path.clone()), &opts) {
-        Ok(h) => h,
-        Err(e) => return message(&[format!("Cannot show {}: {e}", path.display())]),
-    };
+}
+
+/// Write `html` as the next page file and load it.
+fn load_page(html: String) {
+    let (pages, marker) = with(|v| {
+        v.marker += 1;
+        (v.base.join("pages"), v.marker)
+    });
     let file = pages.join(format!("{marker}.html"));
     if let Err(e) = std::fs::write(&file, html) {
         return message(&[format!("Cannot write {}: {e}", file.display())]);
@@ -263,14 +325,15 @@ fn open(item: Item, mode: Mode) {
     let r = with(|v| v.r.clone());
     r.load(&page::page_url(&file, marker), marker, move |res| match res {
         Ok(info) => {
-            let still_current = with(|v| v.marker == marker);
-            if !still_current {
+            if with(|v| v.marker != marker) {
                 return;
             }
             with(|v| {
                 v.doc_h = info.doc_h;
                 v.loaded = true;
-                v.view_top = (info.top_hint * v.dpr / v.g.cell_h as f64) as u64;
+                v.generation += 1;
+                v.ready.clear();
+                v.view_top = v.keep_top.take().unwrap_or((info.top_hint * v.dpr / v.g.cell_h as f64) as u64);
             });
             log(serde_json::json!({"ev": "loaded", "ms": now_ms() - t0, "doc_h": info.doc_h}));
             message(&[]);
@@ -279,6 +342,21 @@ fn open(item: Item, mode: Mode) {
         }
         Err(e) => message(&[e]),
     });
+}
+
+/// The shown file changed on disk: show it again where the reader was; a removed file keeps its last picture.
+fn file_changed(path: &Path) {
+    if with(|v| v.item.as_ref().and_then(|i| i.path.as_deref()) != Some(path)) {
+        return;
+    }
+    if !path.exists() {
+        with(|v| v.title = "File was removed".into());
+        return draw_bar();
+    }
+    let (item, mode, top) = with(|v| (v.item.clone(), v.mode, v.view_top));
+    if let Some(item) = item {
+        open(item, mode, Some(top));
+    }
 }
 
 /// Images that finish after the first capture: once none is pending, capture the tiles again.
@@ -454,8 +532,9 @@ fn resized() {
     let t0 = now_ms();
     r.eval(&format!("window.scrollTo(0, {top_css}); {}", script::anchor()), move |anchor| {
         apply_geometry();
-        let (r, css_w) = with(|v| (v.r.clone(), v.css_w));
-        r.wait_width(css_w, move |doc_h| {
+        // with page zoom the page's own width is the frame width divided by the zoom
+        let (r, inner) = with(|v| (v.r.clone(), (v.css_w * 100.0 / v.zoom as f64).round()));
+        r.wait_width(inner, move |doc_h| {
             with(|v| v.doc_h = doc_h);
             let r = with(|v| v.r.clone());
             r.eval(&script::restore(anchor.as_deref().unwrap_or("null")), move |y| {
@@ -477,25 +556,288 @@ fn resized() {
 }
 
 fn act(action: &str) {
-    let t = now_ms();
+    let (item, mode, top) = with(|v| (v.item.clone(), v.mode, v.view_top));
     match action {
-        "reload" => {
-            if let Some(item) = with(|v| v.item.clone()) {
-                let mode = with(|v| v.mode);
-                open(item, mode);
+        "reload" => match item {
+            Some(i) if i.url.is_some() && i.path.is_none() => {
+                with(|v| v.keep_top = Some(top));
+                fetch_link(i.url.unwrap(), true)
             }
-        }
+            Some(i) => open(i, mode, Some(top)),
+            None => {}
+        },
         "toggle" => {
-            if let Some(item) = with(|v| v.item.clone()) {
-                let mode = with(|v| if v.mode == Mode::Rendered { Mode::Source } else { Mode::Rendered });
-                open(item, mode);
+            if let Some(i) = item {
+                open(i, if mode == Mode::Rendered { Mode::Source } else { Mode::Rendered }, None);
             }
         }
-        _ => log(serde_json::json!({"ev": "action", "action": action, "t_key": t})),
+        "find" => {
+            with(|v| match v.find.as_mut() {
+                Some(f) => f.editing = true,
+                None => v.find = Some(Find { q: FindQuery::default(), count: 0, index: 0, editing: true }),
+            });
+            draw_bar();
+        }
+        "zoom-in" => zoom(|z| (z + ZOOM_STEP).min(200)),
+        "zoom-out" => zoom(|z| z.saturating_sub(ZOOM_STEP).max(50)),
+        "zoom-reset" => zoom(|_| 100),
+        "screenshot" => screenshot(),
+        "browser" => browser(),
+        "back" => {
+            if let Some((i, m, t)) = with(|v| v.history.pop()) {
+                open(i, m, Some(t));
+            }
+        }
+        _ => {}
     }
 }
 
+/// Run the find query again and move to the current match; highlights change the page, so tiles are recaptured.
+fn run_find() {
+    let Some((q, index)) = with(|v| v.find.as_ref().map(|f| (f.q.clone(), f.index))) else { return };
+    let r = with(|v| v.r.clone());
+    let t0 = now_ms();
+    r.eval(&script::find(&q, index), move |s| {
+        let v: serde_json::Value = s.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+        let (count, index, y) = (v[0].as_i64().unwrap_or(0), v[1].as_i64().unwrap_or(0), v[2].as_f64().unwrap_or(-1.0));
+        with(|w| {
+            if let Some(f) = w.find.as_mut() {
+                f.count = count;
+                f.index = index;
+            }
+            if y >= 0.0 {
+                // the match a third of the way down the screen
+                let row = (y * w.dpr / w.g.cell_h as f64) as u64;
+                w.view_top = row.saturating_sub(view_rows(w) as u64 / 3);
+            }
+        });
+        invalidate();
+        draw_bar();
+        draw(t0);
+    });
+}
+
+fn close_find() {
+    with(|v| v.find = None);
+    let r = with(|v| v.r.clone());
+    r.eval(&script::find_clear(), |_| {
+        invalidate();
+        draw_bar();
+        draw(now_ms());
+    });
+}
+
+/// Change the page zoom, keep the element at the top of the screen at the top, remember the zoom.
+fn zoom(f: impl FnOnce(u32) -> u32) {
+    let (old, new) = with(|v| (v.zoom, f(v.zoom)));
+    if old == new || !with(|v| v.loaded) {
+        return;
+    }
+    let _ = state::set_zoom(new);
+    let (r, top_css) = with(|v| {
+        v.zoom = new;
+        (v.r.clone(), v.view_top as f64 * v.g.cell_h as f64 / v.dpr)
+    });
+    let t0 = now_ms();
+    r.eval(&format!("window.scrollTo(0, {top_css}); {}", script::anchor()), move |anchor| {
+        let (r, inner) = with(|v| (v.r.clone(), (v.css_w * 100.0 / new as f64).round()));
+        r.set_zoom(new);
+        r.wait_width(inner, move |doc_h| {
+            with(|v| v.doc_h = doc_h);
+            restore_and_draw(anchor, t0);
+        });
+    });
+}
+
+/// After a re-layout: put the anchored element back at the top, drop the tiles and draw.
+fn restore_and_draw(anchor: Option<String>, t0: f64) {
+    let r = with(|v| v.r.clone());
+    r.eval(&script::restore(anchor.as_deref().unwrap_or("null")), move |y| {
+        with(|v| {
+            if let Some(y) = y.and_then(|y| y.trim().parse::<f64>().ok()) {
+                v.view_top = (y * v.dpr / v.g.cell_h as f64).round() as u64;
+            }
+        });
+        invalidate();
+        message(&[]);
+        draw_bar();
+        log(serde_json::json!({"ev": "relayout", "ms": now_ms() - t0}));
+        draw(t0);
+    });
+}
+
+/// The screen as a PNG under `screenshots/`, copied to the clipboard; a notification says where it went.
+fn screenshot() {
+    if !with(|v| v.loaded) {
+        return;
+    }
+    let (r, top_css, h_css, doc) = with(|v| {
+        let doc = v.item.as_ref().map(|i| Path::new(&i.label).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()).unwrap_or_default();
+        (v.r.clone(), v.view_top as f64 * v.g.cell_h as f64 / v.dpr, view_rows(v) as f64 * v.g.cell_h as f64 / v.dpr, doc)
+    });
+    let line_js = format!("window.scrollTo(0, {top_css}); (() => {{ const e = document.elementFromPoint(40, 4); const tr = e && e.closest('tr[id^=L]'); return JSON.stringify(tr ? tr.id.slice(1) : null); }})()");
+    r.eval(&line_js, move |line| {
+        let line = line.and_then(|l| serde_json::from_str::<Option<String>>(&l).ok()).flatten();
+        let stamp = timestamp();
+        let name = match line {
+            Some(n) => format!("{stamp}-{doc}-L{n}.png"),
+            None => format!("{stamp}-{doc}.png"),
+        };
+        let (r, path) = with(|v| (v.r.clone(), v.base.join("screenshots").join(name.replace('/', "_"))));
+        let shown = path.clone();
+        r.snapshot_png(top_css, h_css, path, move |res| match res {
+            Ok(()) => {
+                let copied = super::clipboard::copy_png(&shown).is_ok();
+                herdr::notify(&format!("Screenshot saved: {}{}", shown.display(), if copied { " (copied)" } else { "" }));
+                log(serde_json::json!({"ev": "screenshot", "path": shown}));
+            }
+            Err(e) => herdr::notify(&format!("Screenshot failed: {e}")),
+        });
+    });
+}
+
+/// `YYYYMMDD-HHMMSS` in local time.
+fn timestamp() -> String {
+    let now = unsafe { libc::time(std::ptr::null_mut()) };
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    unsafe { libc::localtime_r(&now, &mut tm) };
+    format!("{:04}{:02}{:02}-{:02}{:02}{:02}", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec)
+}
+
+/// A local document: its page with absolute references under `browser/`, opened in the default browser. A link:
+/// the original address.
+fn browser() {
+    let Some(item) = with(|v| v.item.clone()) else { return };
+    let target = match (&item.path, &item.url) {
+        (Some(path), _) => {
+            let opts = with(|v| page_options(v, item.line));
+            let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or("page".into());
+            let file = with(|v| v.base.join("browser").join(format!("{name}.html")));
+            match page::browser_page(&Doc::File(path.clone()), &opts).and_then(|h| std::fs::write(&file, h)) {
+                Ok(()) => file.display().to_string(),
+                Err(e) => return herdr::notify(&format!("Cannot open in the browser: {e}")),
+            }
+        }
+        (None, Some(url)) => url.clone(),
+        _ => return,
+    };
+    let _ = std::process::Command::new("open").arg(&target).spawn();
+}
+
+/// A click on the page: a link to a local file opens here (with history), a web address in the browser, an
+/// anchor in the same document scrolls to it.
+fn click(x_px: u32, y_px: u32) {
+    if !with(|v| v.loaded) {
+        return;
+    }
+    let (r, top_css, x_css, y_css) = with(|v| {
+        let y_in_view = y_px.saturating_sub((FIRST_ROW as u32 - 1) * v.g.cell_h);
+        (v.r.clone(), v.view_top as f64 * v.g.cell_h as f64 / v.dpr, x_px as f64 / v.dpr, y_in_view as f64 / v.dpr)
+    });
+    r.eval(&format!("window.scrollTo(0, {top_css}); {}", script::hit(x_css, y_css)), |href| {
+        let Some(href) = href.and_then(|h| serde_json::from_str::<Option<String>>(&h).ok()).flatten() else { return };
+        follow(&href);
+    });
+}
+
+fn follow(href: &str) {
+    if href.starts_with("http://") || href.starts_with("https://") || href.starts_with("mailto:") {
+        let _ = std::process::Command::new("open").arg(href).spawn();
+        return;
+    }
+    let Some(rest) = href.strip_prefix("file://") else { return };
+    let (path, fragment) = match rest.split_once('#') {
+        Some((p, f)) => (percent_decode(p), Some(f.to_string())),
+        None => (percent_decode(rest), None),
+    };
+    let path = PathBuf::from(path);
+    let same_doc = with(|v| v.item.as_ref().and_then(|i| i.path.as_ref()).and_then(|p| p.parent()) == Some(path.as_path()) || v.item.as_ref().and_then(|i| i.path.as_ref()) == Some(&path));
+    if let (Some(frag), true) = (fragment.as_ref(), same_doc || path.is_dir()) {
+        let r = with(|v| v.r.clone());
+        let js = format!("(() => {{ const e = document.getElementById({}); return JSON.stringify(e ? e.getBoundingClientRect().top + window.scrollY : -1); }})()", serde_json::to_string(frag).unwrap());
+        return r.eval(&js, |y| {
+            if let Some(y) = y.and_then(|y| y.parse::<f64>().ok()).filter(|y| *y >= 0.0) {
+                with(|v| v.view_top = (y * v.dpr / v.g.cell_h as f64) as u64);
+                draw(now_ms());
+            }
+        });
+    }
+    if path.is_file() {
+        let (item, mode, top) = with(|v| (v.item.clone(), v.mode, v.view_top));
+        if let Some(i) = item {
+            with(|v| v.history.push((i, mode, top)));
+        }
+        open(Item { label: path.display().to_string(), path: Some(path), url: None, line: None }, Mode::Rendered, None);
+    }
+}
+
+fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                out.push(v);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Keys while the find row takes typing; returns true when the key was used.
+fn on_find_key(k: &Key) -> bool {
+    let editing = with(|v| v.find.as_ref().is_some_and(|f| f.editing));
+    let finding = with(|v| v.find.is_some());
+    if !finding {
+        return false;
+    }
+    let mut rerun = true;
+    match k {
+        Key::Esc => {
+            close_find();
+            return true;
+        }
+        Key::Alt('c') => with(|v| v.find.as_mut().map(|f| f.q.case = !f.q.case)).map(|_| ()).unwrap_or(()),
+        Key::Alt('w') => with(|v| v.find.as_mut().map(|f| f.q.word = !f.q.word)).map(|_| ()).unwrap_or(()),
+        Key::Alt('r') => with(|v| v.find.as_mut().map(|f| f.q.regex = !f.q.regex)).map(|_| ()).unwrap_or(()),
+        Key::Enter if editing => with(|v| {
+            if let Some(f) = v.find.as_mut() {
+                f.editing = false;
+                f.index += 1;
+            }
+        }),
+        Key::Backspace if editing => with(|v| {
+            if let Some(f) = v.find.as_mut() {
+                f.q.text.pop();
+                f.index = 0;
+            }
+        }),
+        Key::Char(c) if editing => with(|v| {
+            if let Some(f) = v.find.as_mut() {
+                f.q.text.push(*c);
+                f.index = 0;
+            }
+        }),
+        Key::Char('n') => with(|v| v.find.as_mut().map(|f| f.index += 1)).unwrap_or(()),
+        Key::Char('N') => with(|v| v.find.as_mut().map(|f| f.index -= 1)).unwrap_or(()),
+        _ => rerun = false,
+    }
+    if rerun {
+        draw_bar();
+        run_find();
+    }
+    rerun || editing
+}
+
 fn on_key(k: Key, t: f64) {
+    if on_find_key(&k) {
+        return;
+    }
     let page = with(|v| view_rows(v) as i64 - 2).max(1);
     match k {
         Key::Char('q') => quit(),
@@ -507,10 +849,17 @@ fn on_key(k: Key, t: f64) {
         Key::Char('G') | Key::End => scroll(i64::MAX / 2, t),
         Key::Char('r') => act("reload"),
         Key::Char('t') => act("toggle"),
+        Key::Char('/') => act("find"),
+        Key::Char('+') | Key::Char('=') => act("zoom-in"),
+        Key::Char('-') => act("zoom-out"),
+        Key::Char('0') => act("zoom-reset"),
+        Key::Char('s') => act("screenshot"),
+        Key::Char('o') => act("browser"),
+        Key::Char('h') | Key::Backspace => act("back"),
         Key::Char(c) if c.is_ascii_digit() => {
             let choice = with(|v| v.choices.get((c as usize).wrapping_sub('1' as usize)).cloned());
             if let Some(item) = choice {
-                open(item, Mode::Rendered);
+                open(item, Mode::Rendered, None);
             }
         }
         _ => {}
@@ -518,11 +867,12 @@ fn on_key(k: Key, t: f64) {
 }
 
 fn on_mouse(m: term::Mouse, t: f64) {
-    let (cell_w, cell_h) = with(|v| (v.g.cell_w.max(1), v.g.cell_h.max(1)));
+    let (cell_w, cell_h, cols) = with(|v| (v.g.cell_w.max(1), v.g.cell_h.max(1), v.g.cols));
     let row = (m.y_px / cell_h) as u16 + 1;
     let col = (m.x_px / cell_w) as u16 + 1;
     let on_bar = row == BAR_ROW;
-    let item = if on_bar { with(|v| v.bar.iter().position(|(a, b)| (*a..=*b).contains(&col))) } else { None };
+    let finding = with(|v| v.find.is_some());
+    let item = if on_bar && !finding { with(|v| v.bar.iter().position(|(a, b)| (*a..=*b).contains(&col))) } else { None };
     match m.kind {
         MouseKind::WheelUp => scroll(-NOTCH, t),
         MouseKind::WheelDown => scroll(NOTCH, t),
@@ -531,11 +881,24 @@ fn on_mouse(m: term::Mouse, t: f64) {
                 draw_bar();
             }
         }
+        MouseKind::Press if on_bar && finding => {
+            let hit = term::find_toggles(cols).iter().position(|(a, b)| (*a..=*b).contains(&col));
+            let key = match hit {
+                Some(0) => Some(Key::Alt('c')),
+                Some(1) => Some(Key::Alt('w')),
+                Some(2) => Some(Key::Alt('r')),
+                _ => None,
+            };
+            if let Some(k) = key {
+                on_find_key(&k);
+            }
+        }
         MouseKind::Press if on_bar => {
             if let Some(n) = item {
                 act(term::bar_items()[n].action);
             }
         }
+        MouseKind::Press if m.button == 0 => click(m.x_px, m.y_px),
         _ => {}
     }
 }
@@ -607,7 +970,7 @@ fn on_state(st: ViewState) {
     }
     match st.items.len() {
         0 => {}
-        1 => open(st.items[0].clone(), st.mode),
+        1 => open(st.items[0].clone(), st.mode, None),
         _ => {
             let mut lines = vec!["Several files match. Press a number:".to_string(), String::new()];
             for (n, item) in st.items.iter().take(9).enumerate() {

@@ -7,10 +7,10 @@ use dispatch2::{DispatchQueue, DispatchTime};
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2::MainThreadMarker;
-use objc2_app_kit::NSImage;
+use objc2_app_kit::{NSBitmapImageFileType, NSBitmapImageRep, NSImage};
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_core_graphics::{kCGColorSpaceSRGB, CGBitmapContextCreate, CGColorSpace, CGContext, CGImageAlphaInfo};
-use objc2_foundation::{NSError, NSNumber, NSPoint, NSRect, NSSize, NSString, NSURL};
+use objc2_foundation::{NSDictionary, NSError, NSNumber, NSPoint, NSRect, NSSize, NSString, NSURL};
 use objc2_web_kit::{WKSnapshotConfiguration, WKWebView, WKWebViewConfiguration};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -154,6 +154,40 @@ impl Renderer {
             unsafe { me.web.takeSnapshotWithConfiguration_completionHandler(Some(&cfg), &block) };
         });
     }
+}
+
+impl Renderer {
+    /// Write the band of the page from `top_css`, `h_css` tall, as a PNG at `path` (screen pixels).
+    pub fn snapshot_png(&self, top_css: f64, h_css: f64, path: std::path::PathBuf, done: impl FnOnce(Result<(), String>) + 'static) {
+        let me = self.clone();
+        let done = RefCell::new(Some(done));
+        self.eval(&format!("window.scrollTo(0, {top_css}); JSON.stringify(window.scrollY)"), move |s| {
+            let scroll_y: f64 = s.and_then(|s| s.parse().ok()).unwrap_or(top_css);
+            let (vw, vh) = me.frame();
+            let offset = (top_css - scroll_y).clamp(0.0, vh);
+            let mtm = MainThreadMarker::new().unwrap();
+            let cfg = unsafe { WKSnapshotConfiguration::new(mtm) };
+            unsafe {
+                cfg.setRect(CGRect::new(CGPoint::new(0.0, offset), CGSize::new(vw, h_css.min(vh - offset).max(1.0))));
+                cfg.setSnapshotWidth(Some(&NSNumber::new_f64(vw)));
+                cfg.setAfterScreenUpdates(true);
+            }
+            let block = RcBlock::new(move |img: *mut NSImage, _e: *mut NSError| {
+                let result = if img.is_null() { Err("snapshot failed".to_string()) } else { write_png(unsafe { &*img }, &path) };
+                if let Some(f) = done.borrow_mut().take() {
+                    f(result)
+                }
+            });
+            unsafe { me.web.takeSnapshotWithConfiguration_completionHandler(Some(&cfg), &block) };
+        });
+    }
+}
+
+fn write_png(image: &NSImage, path: &std::path::Path) -> Result<(), String> {
+    let tiff = image.TIFFRepresentation().ok_or("no image data")?;
+    let rep = NSBitmapImageRep::imageRepWithData(&tiff).ok_or("no bitmap")?;
+    let png = unsafe { rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &NSDictionary::new()) }.ok_or("PNG encoding failed")?;
+    std::fs::write(path, png.to_vec()).map_err(|e| e.to_string())
 }
 
 /// Values handed to `dispatch` closures, which must be `Send`. Only ever used on the main thread.

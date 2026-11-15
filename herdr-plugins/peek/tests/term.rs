@@ -101,3 +101,25 @@ fn tooltips_name_the_key() {
     assert!(tips.contains(&"Open in browser (o)".to_string()));
     assert!(tips.contains(&"Zoom in (+)".to_string()));
 }
+
+#[test]
+fn render_find_shows_toggles_and_position() {
+    use peek::script::FindQuery;
+    let q = FindQuery { text: "agent".into(), case: true, word: false, regex: true };
+    let row = render_find(&q, 22, 2, 100);
+    assert!(row.contains("agent") && row.contains("3/22"));
+    // an option that is on is drawn inverted; one that is off is not
+    assert!(row.contains("\x1b[7m Aa \x1b[27m") && row.contains("\x1b[7m .* \x1b[27m") && !row.contains("\x1b[7m ab \x1b[27m"));
+    assert!(render_find(&q, 0, 0, 100).contains("no matches"));
+    assert!(render_find(&q, -1, 0, 100).contains("bad regex"));
+}
+
+#[test]
+fn find_toggle_columns_match_the_row() {
+    let q = peek::script::FindQuery { text: "x".into(), ..Default::default() };
+    let row = render_find(&q, 1, 0, 80);
+    let cols = find_toggles(80);
+    assert_eq!(cols.len(), 3);
+    assert!(cols.iter().all(|(a, b)| a <= b && *b <= 80));
+    assert!(row.contains(" Aa "));
+}

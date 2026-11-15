@@ -271,7 +271,28 @@ pub fn render_bar(title: &str, zoom: u32, cols: u16, hover: Option<usize>) -> (S
     (text, ranges)
 }
 
-/// Row-1 text while finding: the query, the match case / whole word / regex toggles, and the position.
-pub fn render_find(_q: &FindQuery, _count: i64, _index: i64, _cols: u16) -> String {
-    String::new()
+/// Row-1 text while finding: the query, the match case / whole word / regex toggles (inverted when on) and the
+/// position (`3/22`, `no matches`, `bad regex`).
+pub fn render_find(q: &FindQuery, count: i64, index: i64, cols: u16) -> String {
+    let status = match count {
+        c if c < 0 => "bad regex".to_string(),
+        0 if q.text.is_empty() => String::new(),
+        0 => "no matches".to_string(),
+        c => format!("{}/{c}", index.rem_euclid(c) + 1),
+    };
+    let toggle = |on: bool, label: &str| if on { format!("\x1b[7m {label} \x1b[27m") } else { format!(" {label} ") };
+    // The status takes a fixed 10 columns so the toggles stay where find_toggles says.
+    let right = format!("{}{}{} {status:<10}", toggle(q.case, "Aa"), toggle(q.word, "ab"), toggle(q.regex, ".*"));
+    let right_w = 12 + 1 + 10;
+    let room = (cols as usize).saturating_sub(right_w + 9);
+    let text = fit(&q.text, room);
+    let pad = (cols as usize).saturating_sub(7 + display_width(&text) + right_w);
+    format!("\x1b[1;1H\x1b[2K Find: {text}{}{right}", " ".repeat(pad))
+}
+
+/// Column ranges of the three find toggles (match case, whole word, regex) on the find row of a `cols`-wide pane.
+pub fn find_toggles(cols: u16) -> Vec<(u16, u16)> {
+    // render_find ends the row with 12 columns of toggles, a space and a 10-column status.
+    let start = cols.saturating_sub(23) + 1;
+    vec![(start, start + 3), (start + 4, start + 7), (start + 8, start + 11)]
 }
