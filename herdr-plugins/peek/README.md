@@ -2,11 +2,20 @@
 
 **English** | [한국어](README.ko.md)
 
-A herdr plugin that shows a file or link from a Claude Code pane, rendered like a web page, in a pane to its right, **when you click it**. Nothing opens without a click.
+A herdr plugin that shows a file or link, rendered like a web page, in a pane to the right of the pane where you **Ctrl+click** it. Nothing opens without a click.
 
 macOS's own WebKit renders the page out of sight, and the picture is shown in the herdr pane with Kitty graphics, at the pane's full resolution. Nothing else has to be installed: no glow, bat, python3 or CLI tools.
 
-| You click | Shown as |
+## What can be clicked
+
+herdr passes a click to a plugin only while you hold **Control** (on macOS too: the mouse reports herdr gets cannot tell Command from a plain click), and only on two kinds of text:
+
+- a web address (`http://`, `https://`) printed as plain text: Jira, Confluence and GitHub PR addresses open in peek, other addresses in the browser;
+- a hyperlink (OSC 8) that a program printed, whatever its target: `file:///Users/me/a.md`, `docs/a.md`, `src/app.rs:42`.
+
+A path printed as plain text is not clickable: herdr does not look for paths in plain text (requested in [herdr discussion #609](https://github.com/herdrdev/herdr/discussions/609)). Most programs print paths that way, Claude Code in a herdr pane included. Clicks also need herdr's mouse capture (`ui.mouse_capture`, on by default).
+
+| Opens | Shown as |
 |---|---|
 | a `.md` / `.markdown` path | rendered markdown (tables, task lists, footnotes, images); `t` switches to the source |
 | a source path (`.py` `.java` `.kt` `.ts` `.rs` …); a trailing `:line` jumps to and marks that line | highlighted source with line numbers |
@@ -16,8 +25,7 @@ macOS's own WebKit renders the page out of sight, and the picture is shown in th
 | GitHub PR `github.com/<o>/<r>/pull/<n>` | title, state, description and comments |
 
 - A shortened path (`docs/a.md`, `…/deep/a.md`, `a.md`) is looked up in four places at once: the pane's working folder, the session scratchpad, the session transcript and the git checkout. One candidate opens directly; several show a numbered list; none gives a herdr notification.
-- Other web addresses are not intercepted; they open in the browser.
-- There is one viewer per Claude pane, opened without taking focus. It follows the shown file: when Claude (or you) saves it, the page is redrawn where you were reading.
+- There is one viewer per pane you click in, opened without taking focus. It follows the shown file: when Claude (or you) saves it, the page is redrawn where you were reading.
 - Page scripts never run. HTML inside markdown is shown but inert; HTML files keep their stylesheets, scripts stay off. Remote images load. Mermaid and math show as code.
 
 ## Keys and the top bar

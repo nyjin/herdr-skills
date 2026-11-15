@@ -2,7 +2,7 @@ id = "nyjin.peek"
 name = "peek"
 version = "0.5.0"
 min_herdr_version = "0.9.3"
-description = "Click a path or a Jira, Confluence or GitHub PR link in a Claude Code pane to read it, rendered by WebKit, in the pane beside it"
+description = "Ctrl+click a Jira, Confluence or GitHub PR address, or a hyperlinked path, to read it, rendered by WebKit, in the pane beside it"
 platforms = ["macos"]
 
 # The viewer runs from the plugin root by absolute path: the pane's cwd is the source pane's folder.

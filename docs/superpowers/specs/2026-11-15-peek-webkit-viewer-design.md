@@ -245,3 +245,9 @@ Differences from the design above:
   match. `=` zooms in as well as `+`.
 - Each viewer writes `viewer.log` (timings, errors) in its session folder.
 - PDF is not handled (it shows as text); no time was spent on it in this round.
+- Clicks reach peek only as herdr hands them over (checked against herdr 0.9.5 on 2026-11-16, `src/app/actions.rs`
+  `url_from_link_target`): with Control held, on OSC 8 hyperlinks (any target) and on `http(s)` addresses in plain
+  text. A path printed as plain text, which is how Claude Code prints paths in a herdr pane, is not clickable; herdr
+  does not detect paths in plain text (herdr discussion #609). Ways around it that change what agents print or put a
+  relay between herdr and the shell were rejected: the first changes the user's output, the second hides the pane's
+  foreground process from herdr's agent detection and working-folder tracking.

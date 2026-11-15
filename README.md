@@ -84,7 +84,7 @@ Plugins for herdr itself, installed with `herdr plugin install`, not through Cla
 <!-- herdr-plugins:start -->
 | Plugin | Description |
 |---|---|
-| [`peek`](herdr-plugins/peek/README.md) | Click a path (markdown, source, image, HTML) or a Jira, Confluence or GitHub PR link in a Claude Code pane to read it, rendered by macOS's WebKit, in a pane to its right. Find, zoom, screenshots, links, and a redraw when the file changes. Nothing to install besides the plugin; nothing opens without a click. |
+| [`peek`](herdr-plugins/peek/README.md) | Ctrl+click a Jira, Confluence or GitHub PR address, or a path a program printed as a hyperlink (markdown, source, image, HTML), to read it, rendered by macOS's WebKit, in a pane to its right. Find, zoom, screenshots, links, and a redraw when the file changes. Nothing to install besides the plugin; nothing opens without a click. herdr does not make paths printed as plain text clickable yet. |
 <!-- herdr-plugins:end -->
 
 ```sh
