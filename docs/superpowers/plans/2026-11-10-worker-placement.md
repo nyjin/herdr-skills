@@ -164,10 +164,10 @@
 ### Task 7: Live check and record
 
 **Files:**
-- Modify: `docs/superpowers/specs/2026-11-10-worker-placement-design.md` (§8 결과)
+- Modify: `docs/superpowers/specs/2026-11-10-worker-placement-design.md` (§8 Results)
 - Scratch only: a check script in the session scratchpad (literal absolute paths)
 
 - [ ] **Step 1:** In real herdr, with a scratch repo: (a) a space for the repo exists but is not the current one → `place.py worktree` + `worker-pane.py` → the worktree workspace is grouped with that repo space (`workspace list` repo_key, linked); (b) no space → tab in the current space (`tab list`), no new workspace (`workspace list` count unchanged); (c) `place.py reopen` on an unbound repo space; (d) `runs.py add` + `scan` → `remove_command` runs cleanly for both. No claude is started. Remove everything made.
 - [ ] **Step 2:** `bash scripts/check.sh` → all checks pass.
-- [ ] **Step 3:** Write §8 결과 in the spec (what was measured, anything that differed from the design), commit `docs: record the placement live check`.
+- [ ] **Step 3:** Write §8 Results in the spec (what was measured, anything that differed from the design), commit `docs: record the placement live check`.
 - [ ] **Step 4:** Whole-branch review by a fresh reviewer (herdr tab per `references/dispatch.md`, read-only, verdict file); fix Critical/Important findings, recheck, commit.

@@ -1,149 +1,151 @@
-# glow-preview 2차 Implementation Plan
+# glow-preview Phase 2 Implementation Plan
+
+> Renamed to `peek` on 2026-11-15 (`herdr-plugins/peek`). This record keeps the names it was written with.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 뷰어가 소스코드(bat)와 링크(Jira·Confluence·GitHub PR)도 보여 주고, `.md`를 렌더링과 원문 사이에서 전환할 수 있게 한다.
+**Goal:** The viewer also shows source code (bat) and links (Jira, Confluence, GitHub PR), and lets `.md` switch between rendered and raw.
 
-**Architecture:** 상태 파일 `paths` 대신 `items: [{"path": str, "line": int|None} | {"url": str}]`를 쓴다. 링크 클릭은 `targets.classify`로 URL과 경로를 나눈다. 뷰어는 URL 항목을 `fetch.fetch_markdown`으로 캐시 파일에 쓴 뒤 `.md`처럼 보여 준다. 보기 방식은 `<source>.mode`(`rendered`|`source`)에 담고, 메뉴 키와 herdr 액션으로 바꾼다.
+**Architecture:** Use `items: [{"path": str, "line": int|None} | {"url": str}]` in place of the state file `paths`. A link click splits URL from path with `targets.classify`. The viewer writes a URL item to a cache file with `fetch.fetch_markdown`, then shows it like a `.md`. The view mode lives in `<source>.mode` (`rendered`|`source`) and is changed by a menu key and a herdr action.
 
-**Tech Stack:** python3 표준 라이브러리, glow 3 (`-p`), bat, less, acli, gh, claude CLI(MCP 경로만).
+**Tech Stack:** python3 standard library, glow 3 (`-p`), bat, less, acli, gh, claude CLI (MCP path only).
 
-**Spec:** `docs/superpowers/specs/2026-11-13-glow-preview-design.md` (2차 확장 절)
+**Spec:** `docs/superpowers/specs/2026-11-13-glow-preview-design.md` (Phase 2 extension section)
 
 ## Global Constraints
 
-- CLI 호출은 모두 제한 시간을 둔다: acli·gh 30초, MCP(`claude -p`) 360초.
-- `glow.yml`은 수정하지 않는다. glow는 `-p -w <cols-2>`로, pager는 `PAGER="less -R"`로 실행한다.
-- 자동(훅)으로 여는 것은 `.md`·`.markdown`뿐이다.
-- 캐시 위치는 `~/.cache/glow-preview/`, 테스트에서는 `GLOWP_CACHE_DIR`.
-- gh는 `PATH`의 `gh`를 그대로 쓴다. 사용자 래퍼를 거쳐야 계정이 맞게 골라진다.
+- Every CLI call has a timeout: acli and gh 30 s, MCP (`claude -p`) 360 s.
+- Do not modify `glow.yml`. Run glow with `-p -w <cols-2>` and the pager with `PAGER="less -R"`.
+- Only `.md` and `.markdown` are opened automatically (by the hook).
+- The cache lives in `~/.cache/glow-preview/`, and tests use `GLOWP_CACHE_DIR`.
+- gh uses the `gh` on `PATH` as is. It must go through the user's wrapper so that the right account is picked.
 
 ## Review Focus
 
-1. Confluence 짧은 링크(`/wiki/x/AbCd`)처럼 page id가 없는 URL → 안내 화면, 오류 종료 금지. `test_confluence_without_id_guides`
-2. acli가 30초 넘게 응답하지 않음 → 시간 초과 안내. `test_timeout_guides`
-3. ADF에 처음 보는 노드 → 텍스트를 잃지 않음. `test_unknown_node_keeps_text`
-4. 표 셀 안의 줄바꿈·파이프 문자 → 표가 깨지지 않음. `test_table_cell_escapes`
-5. `src/a.py:42` 클릭 → 42번째 줄로 이동하고 강조. 실측 (Task 4 Step 5)
+1. A URL with no page id, such as a short Confluence link (`/wiki/x/AbCd`) → a guide screen, never an error exit. `test_confluence_without_id_guides`
+2. acli does not respond for over 30 seconds → a timeout guide. `test_timeout_guides`
+3. A node in ADF that has not been seen before → no text is lost. `test_unknown_node_keeps_text`
+4. A line break or pipe character inside a table cell → the table does not break. `test_table_cell_escapes`
+5. Clicking `src/a.py:42` → jumps to line 42 and highlights it. Live check (Task 4 Step 5)
 
 ---
 
-### Task 1: ADF → 마크다운 (`scripts/adf.py`)
+### Task 1: ADF → markdown (`scripts/adf.py`)
 
 **Files:** Create `scripts/adf.py`, `tests/test_adf.py`
 
 **Interfaces:**
-- Produces: `to_markdown(doc: dict | str | None) -> str`. 문자열이면 JSON으로 파싱한다.
+- Produces: `to_markdown(doc: dict | str | None) -> str`. If it is a string, parse it as JSON.
 
-- [ ] **Step 1: 테스트 작성.** 손으로 만든 작은 ADF 조각으로 테스트한다.
-  - `test_blocks`: 블록 요소 변환
-    - heading 2 → `## 제목`
-    - paragraph 두 개 → 빈 줄로 구분
-    - bulletList·orderedList(중첩 포함) → `- `/`1. ` + 들여쓰기 2칸
-    - codeBlock(language) → 펜스 코드 블록
+- [ ] **Step 1: Write the tests.** Test with small hand-made ADF fragments.
+  - `test_blocks`: block element conversion
+    - heading 2 → `## Title`
+    - two paragraphs → separated by a blank line
+    - bulletList and orderedList (including nested) → `- `/`1. ` + 2-space indent
+    - codeBlock(language) → fenced code block
     - blockquote → `> `
     - rule → `---`
-    - panel → `> **ℹ️**`로 시작하는 인용
-    - expand(title) → `**▸ title**` 뒤에 본문
+    - panel → a quote starting with `> **ℹ️**`
+    - expand(title) → `**▸ title**` followed by the body
     - taskList → `- [ ]`/`- [x]`
     - decisionList → `- ✔︎ `
-  - `test_inline`: 인라인 요소 변환
-    - 마크 strong `**`, em `_`, code `` ` ``, strike `~~`, link `[t](href)`
-    - underline·textColor·backgroundColor·annotation·alignment·breakout·indentation·fontSize·border는 무시
-    - hardBreak → 줄바꿈
-    - mention → `@이름`
-    - inlineCard·blockCard·embedCard → `<url>`
+  - `test_inline`: inline element conversion
+    - marks strong `**`, em `_`, code `` ` ``, strike `~~`, link `[t](href)`
+    - underline, textColor, backgroundColor, annotation, alignment, breakout, indentation, fontSize and border are ignored
+    - hardBreak → line break
+    - mention → `@name`
+    - inlineCard, blockCard, embedCard → `<url>`
     - status → `` `[STATUS]` ``
-    - date(timestamp ms) → `YYYY-MM-DD`
+    - date (timestamp ms) → `YYYY-MM-DD`
     - emoji → shortName
-    - media·mediaSingle·mediaGroup·mediaInline → `[첨부: alt|파일]`
-  - `test_table_cell_escapes`: 첫 행(tableHeader)이 헤더가 된다. 셀 안의 `|`는 `\|`로, 줄바꿈은 `<br>`로 바꾼다.
-  - `test_unknown_node_keeps_text`: `{"type":"mystery","content":[text "abc"]}` → `abc`가 남는다.
-  - `test_extension`: extension → `[Confluence 매크로: extensionKey]`
-- [ ] **Step 2:** `python3 -m unittest tests.test_adf -v` → 실패 확인
-- [ ] **Step 3: 구현**
-- [ ] **Step 4:** 통과 확인. 그다음 세션에서 모은 문서 51개(scratchpad `adf_corpus.json`)를 모두 변환해 예외 0건인지 확인한다.
-- [ ] **Step 5: 커밋** — `feat: convert Atlassian documents to markdown`
+    - media, mediaSingle, mediaGroup, mediaInline → `[Attachment: alt|file]`
+  - `test_table_cell_escapes`: the first row (tableHeader) becomes the header. A `|` inside a cell becomes `\|`, and a line break becomes `<br>`.
+  - `test_unknown_node_keeps_text`: `{"type":"mystery","content":[text "abc"]}` → `abc` is kept.
+  - `test_extension`: extension → `[Confluence macro: extensionKey]`
+- [ ] **Step 2:** `python3 -m unittest tests.test_adf -v` → confirm it fails
+- [ ] **Step 3: Implement**
+- [ ] **Step 4:** Confirm it passes. Then convert all 51 documents collected from sessions (scratchpad `adf_corpus.json`) and confirm there are 0 exceptions.
+- [ ] **Step 5: Commit** — `feat: convert Atlassian documents to markdown`
 
-### Task 2: 링크 분류와 가져오기 (`scripts/targets.py`, `scripts/fetch.py`)
+### Task 2: Link classification and fetching (`scripts/targets.py`, `scripts/fetch.py`)
 
-**Files:** Create `scripts/targets.py`, `scripts/fetch.py`, `tests/test_fetch.py`, `tests/fake_cli.py` (acli·gh·claude 흉내. 동작은 환경변수 `FAKE_MODE`로 고른다: `ok`, `auth`, `notfound`, `hang`)
+**Files:** Create `scripts/targets.py`, `scripts/fetch.py`, `tests/test_fetch.py`, `tests/fake_cli.py` (imitates acli, gh and claude; the behavior is chosen with the environment variable `FAKE_MODE`: `ok`, `auth`, `notfound`, `hang`)
 
 **Interfaces:**
 - Consumes: `adf.to_markdown`
 - Produces:
-  - `targets.classify(text: str) -> dict`. 결과는 셋 중 하나다.
+  - `targets.classify(text: str) -> dict`. The result is one of three.
     - `{"kind": "jira", "url", "key"}`
     - `{"kind": "confluence", "url", "page_id": str|None}`
     - `{"kind": "github_pr", "url", "repo": "o/r", "number": str}`
-    - `{"kind": "path", "text": str, "line": int|None}` (`resolve.normalize` 뒤 끝의 `:줄[:열]`에서 줄을 읽는다)
-  - `fetch.fetch_markdown(url: str, *, via: str = "cli", timeout: int = 30) -> tuple[str, bool]`. `(마크다운, 성공 여부)`를 돌려준다. 실패하면 마크다운에 원인별 안내를 담는다. 원인은 `missing`·`auth`·`notfound`·`timeout`·`noid`·`error`다. Jira·Confluence 실패 안내에는 `m` 키 MCP 안내(3~4분, 약 $0.02)를 넣는다.
-  - `via="mcp"`는 `claude -p`에 Atlassian MCP 도구 두 개만 허용해 실행하고, 결과 마크다운을 그대로 쓴다. 모델은 `claude-haiku-5-5`, `--max-turns 6`이다.
+    - `{"kind": "path", "text": str, "line": int|None}` (after `resolve.normalize`, the line is read from the trailing `:line[:col]`)
+  - `fetch.fetch_markdown(url: str, *, via: str = "cli", timeout: int = 30) -> tuple[str, bool]`. Returns `(markdown, success)`. On failure the markdown holds a guide for the cause. The causes are `missing`, `auth`, `notfound`, `timeout`, `noid` and `error`. The Jira and Confluence failure guides include the `m` key MCP note (3 to 4 minutes, about $0.02).
+  - `via="mcp"` runs `claude -p` allowing only two Atlassian MCP tools, and uses the resulting markdown as is. The model is `claude-haiku-5-5`, with `--max-turns 6`.
   - `fetch.cache_path(url: str) -> str`: `<cache>/<sha1(url)[:12]>.md`
-- [ ] **Step 1: 테스트 작성** (fake_cli를 `PATH` 맨 앞에 `acli`·`gh`·`claude` 이름으로 링크한다)
-  - `test_classify`: 다음 다섯 입력이 각각 올바르게 분류된다.
+- [ ] **Step 1: Write the tests** (link fake_cli to the front of `PATH` under the names `acli`, `gh` and `claude`)
+  - `test_classify`: the following five inputs are each classified correctly.
     - Jira browse URL
-    - Confluence `/pages/123/title`와 `/wiki/x/AbCd`(page_id None)
+    - Confluence `/pages/123/title` and `/wiki/x/AbCd` (page_id None)
     - PR URL
     - `src/a.py:42:3` → path, line 42
-  - `test_jira_ok`: 결과에 `# KEY 요약`, 상태·담당자 줄, ADF 본문, `## 코멘트`가 들어간다.
-  - `test_confluence_ok`: 결과에 `# 제목`과 본문이 들어간다. acli 호출 인자에 `--body-format atlas_doc_format`이 있다.
-  - `test_pr_ok`: gh 호출에 `-R o/r`가 있다. 결과에 제목·상태·작성자, 리뷰(작성자·상태·본문), 인라인 코멘트(`path:line`), 바뀐 파일 목록이 들어간다.
-  - `test_auth_guides`: acli 인증 오류 → ok False이고 안내에 `acli jira auth login`이 들어간다(Confluence는 `acli confluence auth login`).
-  - `test_missing_cli_guides`: acli가 PATH에 없음 → `brew install acli` 안내
-  - `test_timeout_guides`: hang 모드에서 `timeout=1`이면 "시간 초과" 안내
-  - `test_confluence_without_id_guides`: page id 없음 → 안내, CLI 호출 없음
-  - `test_pr_api_account_fallback`: `gh api`가 첫 시도에 404 → `gh auth token --user <두 번째 계정>`으로 다시 시도해 인라인 코멘트를 얻는다.
-- [ ] **Step 2:** 실패 확인
-- [ ] **Step 3: 구현**
-- [ ] **Step 4:** 통과 확인. 그다음 세션 링크 실물로 Jira 3·Confluence 3·PR 3건을 `fetch_markdown`으로 가져와 렌더링 결과를 눈으로 확인한다.
-- [ ] **Step 5: 커밋** — `feat: fetch Jira, Confluence and PR content as markdown`
+  - `test_jira_ok`: the result contains `# KEY summary`, the status and assignee lines, the ADF body and `## Comments`.
+  - `test_confluence_ok`: the result contains `# Title` and the body. The acli call arguments include `--body-format atlas_doc_format`.
+  - `test_pr_ok`: the gh call has `-R o/r`. The result contains the title, status and author, the reviews (author, state, body), the inline comments (`path:line`) and the list of changed files.
+  - `test_auth_guides`: acli authentication error → ok False and the guide contains `acli jira auth login` (for Confluence, `acli confluence auth login`).
+  - `test_missing_cli_guides`: acli not on PATH → a `brew install acli` guide
+  - `test_timeout_guides`: with `timeout=1` in hang mode, a "timed out" guide
+  - `test_confluence_without_id_guides`: no page id → a guide, no CLI call
+  - `test_pr_api_account_fallback`: `gh api` returns 404 on the first try → retry with `gh auth token --user <second account>` and get the inline comments.
+- [ ] **Step 2:** Confirm it fails
+- [ ] **Step 3: Implement**
+- [ ] **Step 4:** Confirm it passes. Then fetch 3 Jira, 3 Confluence and 3 PR links from real session links with `fetch_markdown` and check the rendered result by eye.
+- [ ] **Step 5: Commit** — `feat: fetch Jira, Confluence and PR content as markdown`
 
-### Task 3: 상태 형식·링크 진입점·전환 액션 (`glowp.py`)
+### Task 3: State format, link entry point, toggle action (`glowp.py`)
 
 **Files:** Modify `scripts/glowp.py`, `scripts/resolve.py`, `tests/test_glowp.py`, `tests/test_resolve.py`, `herdr-plugin.toml`
 
 **Interfaces:**
 - Produces:
-  - 상태 파일 `{"items": [...], "seq": int}`
+  - State file `{"items": [...], "seq": int}`
   - `show(source: str, items: list[dict])`
-  - `resolve.candidates(…)`가 확장자와 상관없이 동작한다. 대화 기록 정규식을 "점이 있는 파일명"으로 넓힌다.
-  - `glowp.py toggle`: `$HERDR_PANE_ID`가 어떤 `<src>.viewer`의 pane이면 그 src, 아니면 자기 자신을 source로 본다. `<src>.mode`를 뒤집고 seq를 올린다.
-- [ ] **Step 1: 테스트 수정·추가**
-  - 기존 테스트의 `paths`를 `items`로 바꾼다.
-  - `test_link_url_item`: Jira URL 클릭 → 상태 `items == [{"url": …}]`, resolve를 부르지 않는다.
+  - `resolve.candidates(…)` works regardless of extension. The transcript regex is widened to "a file name with a dot".
+  - `glowp.py toggle`: if `$HERDR_PANE_ID` is the pane of some `<src>.viewer`, that src is the source, else it treats itself as the source. It flips `<src>.mode` and raises seq.
+- [ ] **Step 1: Change and add tests**
+  - Change `paths` to `items` in the existing tests.
+  - `test_link_url_item`: clicking a Jira URL → state `items == [{"url": …}]`, resolve is not called.
   - `test_link_source_line`: `docs/b.py:7` → `items == [{"path": …/b.py, "line": 7}]`
-  - `test_toggle_from_viewer_pane`: 뷰어 pane에서 toggle → `<src>.mode`가 `source`가 되고 seq가 바뀐다. 한 번 더 하면 `rendered`가 된다.
-  - `test_resolve_any_extension`: `pkg/x.py`를 git 끝부분 일치로 찾는다.
-- [ ] **Step 2:** 실패 확인 → **Step 3:** 구현
-- [ ] **Step 3b: 매니페스트 수정**
-  - `[[actions]] toggle-view`(contexts pane)을 추가한다.
-  - `[[link_handlers]]`를 추가한다. 모두 action은 `open-link`다.
-    - `source`: 확장자 목록 `py|java|kt|kts|ts|tsx|js|jsx|go|rs|sh|sql|ya?ml|toml|json|xml|gradle|rb|swift|c|h|cpp|hpp`
+  - `test_toggle_from_viewer_pane`: toggle from the viewer pane → `<src>.mode` becomes `source` and seq changes. Once more and it becomes `rendered`.
+  - `test_resolve_any_extension`: finds `pkg/x.py` by git tail matching.
+- [ ] **Step 2:** Confirm it fails → **Step 3:** Implement
+- [ ] **Step 3b: Change the manifest**
+  - Add `[[actions]] toggle-view` (contexts pane).
+  - Add `[[link_handlers]]`. All have the action `open-link`.
+    - `source`: extension list `py|java|kt|kts|ts|tsx|js|jsx|go|rs|sh|sql|ya?ml|toml|json|xml|gradle|rb|swift|c|h|cpp|hpp`
     - `jira`: `https://[^/\s]+\.atlassian\.net/browse/[A-Z][A-Z0-9]+-\d+`
     - `confluence`: `https://[^/\s]+\.atlassian\.net/wiki/\S+`
     - `github-pr`: `https://github\.com/[^/\s]+/[^/\s]+/pull/\d+`
-- [ ] **Step 4:** 통과 확인 → **Step 5:** 커밋 `feat: link items for source files and URLs; toggle action`
+- [ ] **Step 4:** Confirm it passes → **Step 5:** Commit `feat: link items for source files and URLs; toggle action`
 
-### Task 4: 뷰어 (pager·bat·URL·메뉴)
+### Task 4: Viewer (pager, bat, URL, menu)
 
 **Files:** Modify `scripts/glowp.py` (`viewer`), `README.md`
 
-- [ ] **Step 1: 구현**
-  - 폭은 `shutil.get_terminal_size().columns - 2`로 정한다.
-  - 보여 주는 방식:
-    - `.md`이고 렌더링 모드: `glow -p -w W -s auto <file>`, `PAGER="less -R"`
-    - 원문 모드나 소스코드: `bat --paging=always --pager "less -R +<n>g -j.3" --highlight-line <n>`. n은 bat의 머리줄 수만큼 보정한다(Step 5에서 실측으로 정한다).
-    - URL 항목: 먼저 "가져오는 중…"을 출력하고 `fetch_markdown`으로 캐시 파일을 만든다. 그다음 `.md`로 보여 준다.
-  - pager에서 나오면 메뉴를 보여 준다.
-    - `r` 다시 보기
-    - `s` 렌더링/원문 전환(`.md`일 때만)
-    - `o` 브라우저(URL일 때만)
-    - `m` MCP로 가져오기(Atlassian 실패일 때만)
-    - `q` 닫기
-  - bat이 없으면 glow처럼 알리고 `brew install bat`으로 설치한다.
-- [ ] **Step 2: 실측 — 한글 문단.** 170칸 pane에서 설계 문서의 "실측 근거" 문단 끝("고르게 한다")이 화면에 있어야 한다.
-- [ ] **Step 3: 실측 — 전환.** `toggle` 액션을 실행하면 pager가 떠 있는 상태에서도 원문(bat)으로 바뀌고, 다시 실행하면 렌더링으로 돌아온다.
-- [ ] **Step 4: 실측 — 링크.** Jira·Confluence·PR 링크 각 1건을 link 진입점으로 열어 내용을 확인한다. acli를 PATH에서 숨기면 안내와 `m` 메뉴가 나와야 한다.
-- [ ] **Step 5: 실측 — 줄 이동.** `scripts/glowp.py:120`을 열면 화면에 120번째 줄이 보이고 강조되어 있다.
-- [ ] **Step 6:** README를 갱신하고 커밋한다: `feat: pager viewer with bat, toggle and link previews`
+- [ ] **Step 1: Implement**
+  - The width is `shutil.get_terminal_size().columns - 2`.
+  - How things are shown:
+    - `.md` in rendered mode: `glow -p -w W -s auto <file>`, `PAGER="less -R"`
+    - Raw mode or source code: `bat --paging=always --pager "less -R +<n>g -j.3" --highlight-line <n>`. n is adjusted by the number of bat header lines (decided by live check in Step 5).
+    - URL item: first print "Fetching…" and build the cache file with `fetch_markdown`. Then show it as a `.md`.
+  - After leaving the pager, show a menu.
+    - `r` view again
+    - `s` toggle rendered/raw (only for `.md`)
+    - `o` browser (only for URLs)
+    - `m` fetch through MCP (only when Atlassian failed)
+    - `q` close
+  - If bat is missing, announce it as with glow and install it with `brew install bat`.
+- [ ] **Step 2: Live check — Korean paragraph.** In a 170-column pane, the end of the "Measured basis" paragraph of the design document ("so the user chooses") must be on screen.
+- [ ] **Step 3: Live check — toggle.** Running the `toggle` action switches to raw (bat) even with the pager up, and running it again returns to rendered.
+- [ ] **Step 4: Live check — links.** Open one Jira, one Confluence and one PR link through the link entry point and check the content. With acli hidden from PATH, the guide and the `m` menu must appear.
+- [ ] **Step 5: Live check — jump to line.** Opening `scripts/glowp.py:120` shows line 120 on screen, highlighted.
+- [ ] **Step 6:** Update the README and commit: `feat: pager viewer with bat, toggle and link previews`

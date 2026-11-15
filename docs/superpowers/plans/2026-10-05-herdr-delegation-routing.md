@@ -78,7 +78,7 @@ No code changes. Results go into the spec as a new section and decide two detail
 **Done when:** spec §11 has a filled row for V1–V4 (no `<…>` left), V1's decision row is stated, and the spec commit exists. If V1 chose anything but export, the plan stops here.
 
 **Files:**
-- Modify: `docs/superpowers/specs/2026-10-04-herdr-delegation-routing-design.md` (append `## 11. 실측 결과`)
+- Modify: `docs/superpowers/specs/2026-10-04-herdr-delegation-routing-design.md` (append `## 11. Measured results`)
 
 Use a scratch directory outside the repo for every probe file: `S="$(mktemp -d)"`. Shell variables do not survive between Bash calls; put the printed value of `S` into later commands.
 
@@ -194,14 +194,14 @@ Record: exit code and time of each wait, and whether the last line is visible in
 Append to the spec:
 
 ```markdown
-## 11. 실측 결과 (구현 전)
+## 11. Measured results (before implementation)
 
-| 항목 | 결과 | 반영 |
+| Item | Result | Applied as |
 |---|---|---|
-| V1 워커 표식 전달 | A export: <worker=… 출력 그대로>, B split `--env`: <worker=… 출력 그대로> | <export 유지 / split 방식으로 변경 / runs.json 대체> |
-| V2 `if` 패턴 | (1)<…> (2)<…> (3)<…> (4)<…> | Task 4 등록 패턴 |
-| V3 프로젝트 안 `cd` 후 `cwd` | main: <…>, sub: <…> | F3 보완 |
-| V4 `wait-output` | 기본: exit <…> / <…>s, `--lines 400`: exit <…> / <…>s | Task 5 W4 수정 방식 |
+| V1 worker marker passing | A export: <worker=… output as is>, B split `--env`: <worker=… output as is> | <keep export / switch to split / replace with runs.json> |
+| V2 `if` pattern | (1)<…> (2)<…> (3)<…> (4)<…> | Task 4 registration pattern |
+| V3 `cwd` after `cd` inside the project | main: <…>, sub: <…> | F3 supplement |
+| V4 `wait-output` | default: exit <…> / <…>s, `--lines 400`: exit <…> / <…>s | How Task 5 W4 is changed |
 ```
 
 Fill every `<…>` with the observed value (this is a results table, not a template left for later).
@@ -1504,7 +1504,7 @@ import tempfile
 
 SKILL = "herdr-parallel-worktree"
 ORCHESTRATION = re.compile(r"herdr\s+(worktree\s+create|agent\s+start)")
-WORKER_STOP = re.compile(r"\bw1\b|HERDR_PW_WORKER|inside (a|the|this) (herdr )?worker|워커 (안|내부|세션)", re.I)
+WORKER_STOP = re.compile(r"\bw1\b|HERDR_PW_WORKER|inside (a|the|this) (herdr )?worker|\uc6cc\ucee4 (\uc548|\ub0b4\ubd80|\uc138\uc158)", re.I)
 BAD_ADVICE = re.compile(r"`!\s*git|!\s*git\s+worktree|turn (the )?(herdr[- ]parallel[- ]worktree )?hooks? off|"
                         r"turn off the herdr", re.I)
 results = []
@@ -1765,7 +1765,7 @@ Inside herdr, the skill's hooks keep worktree work visible. Creating a worktree 
 In `README.ko.md`, replace the matching sentences with:
 
 ```markdown
-herdr 안에서는 훅이 worktree 작업을 눈에 보이게 유지합니다. 스킬 밖에서 worktree를 만들려 하면 막힙니다. 메인 세션은 스킬로 안내되고, 서브에이전트는 멈춰서 작업을 되돌려 줍니다(`HERDR-HANDOFF` 블록. 메인 세션이 한 번 확인을 받은 뒤 워커로 띄웁니다). 워커는 직접 작업하라는 안내를 받습니다. 서브에이전트가 다른 워커의 worktree에 쓰려 해도 같은 방식으로 멈춥니다. herdr 밖에서는 python을 띄우기 전에 훅이 끝납니다.
+Inside herdr, the hooks keep worktree work visible. Creating a worktree outside the skill is blocked. The main session is guided to the skill, and a subagent stops and hands the work back (a `HERDR-HANDOFF` block; the main session confirms once and then starts it as a worker). A worker is told to do the work itself. A subagent that tries to write to another worker's worktree is stopped the same way. Outside herdr, the hook ends before python starts.
 ```
 
 If a README has no hooks paragraph, add the sentence(s) to the section that lists the skill's features, and say so in the commit message.

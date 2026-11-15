@@ -1,67 +1,67 @@
-# 역할 주입과 워커 전용 탭 — 설계 기록
+# Role injection and a worker-only tab — design record
 
-- 날짜: 2026-10-20
-- 버전: 0.7.0
-- 범위: `herdr-parallel-worktree` 스킬 · 훅(`route.py`) · 새 스크립트 `worker-pane.py`
+- Date: 2026-10-20
+- Version: 0.7.0
+- Scope: `herdr-parallel-worktree` skill, hook (`route.py`), new script `worker-pane.py`
 
-## 1. 무엇이 문제였나
+## 1. What the problem was
 
-실제 세션 두 건에서 스킬이 발동하지 않았다.
+In two real sessions the skill did not fire.
 
-| 사례 | 일어난 일 | 원인 |
+| Case | What happened | Cause |
 |---|---|---|
-| 다른 스킬(executor)이 "티켓마다 서브에이전트를 띄운다, 사람이 입력할 수 있는 대화형이어야 한다"고 지시 | 메인 세션이 Agent 서브에이전트로 넘기고, "하네스가 못 주면" 조항으로 빠져나감 | 세션이 herdr 안에서 자기가 오케스트레이터라는 것을 모름. 스킬 설명은 "several … at the same time"에 맞춰져 있고 "Not for single edits"로 티켓 한 건을 밀어냄 |
-| 메인 세션이 티켓 한 건을 위해 `git worktree add -b feature/<KEY>` | 훅이 `EnterWorktree`로 보냄. `.claude/worktrees/feature+<KEY>`, 브랜치 `worktree-feature+<KEY>`가 생겨 저장소 관례와 어긋남. herdr-plus가 그 workspace에 claude를 따로 띄워 idle로 남음 | 훅 메시지가 "the same git worktree"라고 사실과 다르게 말하고, 티켓 작업을 메인 세션이 직접 하는 쪽으로 보냄 |
+| Another skill (executor) said "launch a subagent per ticket, it must be interactive so a person can type" | The main session handed off to an Agent subagent and slipped out through the "if the harness cannot provide it" clause | The session did not know it was the orchestrator inside herdr. The skill description was tuned to "several … at the same time", and "Not for single edits" pushed a single ticket away |
+| The main session ran `git worktree add -b feature/<KEY>` for one ticket | The hook redirected it to `EnterWorktree`. That created `.claude/worktrees/feature+<KEY>` and branch `worktree-feature+<KEY>`, which does not match the repository convention. herdr-plus launched a separate claude in that workspace, which stayed idle | The hook message wrongly said "the same git worktree", and sent ticket work toward the main session doing it directly |
 
-같은 실행에서 워커 경로도 깨질 수 있었다. herdr-plus 레이아웃이 root pane에서 claude를 띄우므로, 스킬의 `pane run "export …; cat brief"`가 셸이 아니라 그 claude에 입력되고 `agent start`는 `agent_pane_busy`가 된다.
+In the same run the worker path could also break. The herdr-plus layout launches claude in the root pane, so the skill's `pane run "export …; cat brief"` is typed into that claude instead of a shell, and `agent start` gives `agent_pane_busy`.
 
-## 2. 결정
+## 2. Decisions
 
-1. **역할을 세션 시작 때 알려 준다 (SessionStart, R9).** 메인 세션에는 "너는 오케스트레이터다. 넘기는 작업은 티켓 한 건이라도 워커다. 다른 스킬의 '서브에이전트를 띄워라'도 워커다"를, 워커에는 이름과 경계를 준다. 목적을 나열하기보다 역할을 서술한다(사용자 결정). 서브에이전트와, `HERDR_PW_WORKER` 없이 linked worktree 안에서 시작한 세션(플러그인 레이아웃이 워커의 workspace에 띄운 claude 등)에는 아무것도 주지 않는다. herdr 안의 세션마다 한 문단(약 100토큰)이 들고, 훅 비용은 약 37ms다.
-2. **`git worktree add` 차단 메시지를 역할 문장으로 바꾼다.** 티켓 작업은 워커로, `EnterWorktree`는 사용자가 이 세션 자체를 옮기라고 할 때만. `EnterWorktree`가 실제로 만드는 경로·브랜치를 적는다.
-3. **스킬 설명이 단일 작업을 받는다.** "a task, even a single ticket, … that the user can watch or step into". 제외 조건은 "quick edits done in this session"으로 좁힌다. 본문에 오케스트레이터 → 워커 → 워커 안의 서브에이전트 계층과, 다른 스킬과 부딪칠 때의 우선순위를 적는다.
-4. **워커는 언제나 자기 탭에서 시작한다.** `worker-pane.py`가 (1) 이 worktree에 반응한 플러그인 핸들러가 끝나기를 기다리고 (2) `HERDR_PW_WORKER`를 환경변수로 넣은 탭을 만들고 (3) 그 셸이 프롬프트에서 쉬고 있을 때까지 기다린다. 플러그인이 만든 탭과 root pane에는 입력하지 않는다. 새 워커·재개·후속 전달이 모두 이 길을 쓴다.
-5. **`EnterWorktree` 뒤에 사이드바 라벨을 알려 준다.** 플러그인이 띄운 claude는 별개의 idle 세션이라는 것도 함께.
+1. **Tell the session its role at session start (SessionStart, R9).** The main session gets "You are the orchestrator. Work you hand off is a worker, even a single ticket. 'Launch a subagent' from another skill also means a worker." A worker gets its name and its boundary. Describe the role rather than list purposes (user decision). Subagents, and sessions that start inside a linked worktree without `HERDR_PW_WORKER` (such as the claude a plugin layout launches in a worker's workspace), get nothing. Every session inside herdr pays one paragraph (about 100 tokens), and the hook costs about 37ms.
+2. **Change the `git worktree add` block message into role sentences.** Ticket work goes to a worker. `EnterWorktree` only when the user asks to move this session itself. State the path and branch `EnterWorktree` actually creates.
+3. **The skill description accepts a single task.** "a task, even a single ticket, … that the user can watch or step into". The exclusion narrows to "quick edits done in this session". The body states the hierarchy orchestrator → worker → subagent inside a worker, and the priority when it collides with another skill.
+4. **A worker always starts in its own tab.** `worker-pane.py` (1) waits for the plugin handlers that reacted to this worktree to finish, (2) creates a tab with `HERDR_PW_WORKER` set as an environment variable, and (3) waits until that shell rests at the prompt. It does not type into the tab the plugin created or the root pane. New workers, resume, and follow-up delivery all use this path.
+5. **Tell the sidebar label after `EnterWorktree`.** Also that the claude a plugin launched is a separate idle session.
 
-## 3. 실측
+## 3. Measurements
 
-모두 herdr 0.9.3, herdr-plus 0.1.24(`_default.toml`: claude · git · shell 탭), persiyanov.reviewr가 설치된 환경에서 이 저장소로 했다.
+All done with this repository, on herdr 0.9.3, herdr-plus 0.1.24 (`_default.toml`: claude, git, shell tabs), with persiyanov.reviewr installed.
 
-| # | 확인한 것 | 결과 |
+| # | What was checked | Result |
 |---|---|---|
-| M1 | worktree를 만든 직후 root pane | 0~4초는 셸이 foreground, 8초쯤 claude로 바뀜. 핸들러는 1초 안에 끝났지만 명령은 셸 초기화 동안 입력 대기열에 있었다. **한 순간의 "셸이 비었다"는 판정 기준이 못 된다** |
-| M2 | 핸들러가 끝나기 전에 탭을 만들면 | herdr-plus 로그: `already has 2 panes; skipping layout`. 레이아웃이 빠진다 |
-| M3 | 완료 신호 | `herdr plugin log list`가 이벤트별 핸들러의 `status`(`running` → `succeeded`)와 시각을 남긴다. workspace id는 없어 시작 시각(`SINCE`)으로 거른다 |
-| M4 | `tab create --env` | 새 탭의 셸과 그 안의 claude가 `HERDR_PW_WORKER`를 받는다 (`PW=[probe]`, 워커가 env.txt에 이름을 씀) |
-| M5 | 전체 흐름 (스킬 1~3단계 그대로) | 탭이 `claude, git, shell, <name>`. 레이아웃이 그대로 있고, 워커는 전용 탭에서 브리프를 따름. SessionStart로 받은 문장을 그대로 옮겨 적음: "You are herdr worker `e2e-role`, …" |
-| M6 | 셸 준비 판정 | foreground 그룹이 셸이어도 프롬프트 훅(`mise`)이 같은 그룹에서 돌면 `agent start`가 `agent_pane_busy`. 판정을 "셸만 foreground에 있음, 두 번 연속"으로 바꾸고, `cat` 뒤 다시 도는 훅에 대비해 `agent_pane_busy`는 1초 간격 최대 세 번 다시 시도한다 |
-| M7 | 재개 | workspace를 닫고(worktree 유지) `worktree open` → `worker-pane.py` → 새 탭에서 `claude --resume <id>`. 같은 세션 id로 떠서 앞서 env.txt에 쓴 값을 기억함. 플러그인은 `worktree.opened`에도 반응했고 기다림이 그것을 잡았다 |
+| M1 | The root pane right after creating the worktree | For 0 to 4 seconds the shell is in the foreground, and around 8 seconds it turns into claude. The handler finished within 1 second, but the command sat in the input queue during shell initialization. **A one-moment "the shell is empty" check is no criterion** |
+| M2 | Creating a tab before the handler finishes | herdr-plus log: `already has 2 panes; skipping layout`. The layout is dropped |
+| M3 | Completion signal | `herdr plugin log list` keeps each handler's `status` (`running` → `succeeded`) and time per event. There is no workspace id, so filter by start time (`SINCE`) |
+| M4 | `tab create --env` | The new tab's shell and the claude in it receive `HERDR_PW_WORKER` (`PW=[probe]`, the worker wrote its name to env.txt) |
+| M5 | The whole flow (skill steps 1 to 3 as written) | Tabs are `claude, git, shell, <name>`. The layout is intact, and the worker follows the brief in its own tab. It copied down the sentence received through SessionStart: "You are herdr worker `e2e-role`, …" |
+| M6 | Shell-ready check | Even when the foreground group is a shell, if a prompt hook (`mise`) runs in the same group, `agent start` gives `agent_pane_busy`. The check changed to "only the shell is in the foreground, twice in a row", and for the hook that runs again after `cat`, `agent_pane_busy` is retried at 1 second intervals up to three times |
+| M7 | Resume | Close the workspace (keep the worktree), `worktree open` → `worker-pane.py` → `claude --resume <id>` in a new tab. It came up with the same session id and remembered the value written to env.txt earlier. The plugin also reacted to `worktree.opened`, and the wait caught it |
 
-### 행동 확인 (claude -p, sonnet, 각 1회)
+### Behavior check (claude -p, sonnet, once each)
 
-티켓 한 건 요청 두 가지(S7: "자기 브랜치에서 구현하고 PR 전에 그 세션에서 리뷰", S8: "티켓마다 서브에이전트를 띄운다, 대화형으로")에서 스킬을 쓰는지 봤다.
+With two single-ticket requests (S7: "implement on its own branch and review in that session before the PR", S8: "launch a subagent per ticket, interactively"), we checked whether the skill is used.
 
-| 조건 | S7 | S8 |
+| Condition | S7 | S8 |
 |---|---|---|
-| 0.6.0 스킬, 훅 없음 | 스킬을 쓰지 않고 이 세션에서 처리 | 스킬 사용 |
-| 새 스킬 설명, 훅 없음 | 스킬 사용 | 스킬 사용 |
-| 새 스킬 설명 + 훅(SessionStart 포함), `live_skill.py` | 통과 | 통과 |
+| 0.6.0 skill, no hook | Does not use the skill, handles it in this session | Uses the skill |
+| New skill description, no hook | Uses the skill | Uses the skill |
+| New skill description + hook (including SessionStart), `live_skill.py` | Pass | Pass |
 
-1회씩이라 근거는 약하다. 설명 변경만으로도 S7이 바뀌었고, 역할 주입은 M5에서 문장이 실제로 세션에 들어가는 것을 따로 확인했다.
+With one run each, the evidence is weak. The description change alone changed S7, and for role injection, M5 separately confirmed that the sentence actually enters the session.
 
-## 4. 기각한 안
+## 4. Rejected options
 
-| 안 | 기각 이유 |
+| Option | Why rejected |
 |---|---|
-| A. 레이아웃이 띄운 claude를 끄고 그 pane을 쓴다 | 사용자가 레이아웃에 적어 둔 실행(이 저장소는 `JAVA_HOME=…21`)을 무력화한다 |
-| C. 레이아웃이 띄운 claude를 워커로 쓴다 (`send-text`로 지시) | 지시는 받았지만(실측), 환경변수를 넣을 수 없어 워커 판정을 cwd로 바꿔야 하고, `workerArgs`·`--add-dir`이 빠지며, 그 pane에 무엇이 뜰지는 플러그인마다 다르다. 특정 명령(claude)을 기준으로 갈래를 나누게 된다 |
-| root pane이 셸 프롬프트인지로 판정해 쓴다 | M1: 플러그인 명령이 아직 대기열에 있을 수 있어 경쟁 상태다 |
-| Agent 호출의 프롬프트 안 worktree 경로로 막는다 | 훅은 프롬프트 문구로 판정하지 않는다는 원칙과 어긋난다. 역할 주입으로 먼저 다룬다 |
+| A. Turn off the claude the layout launched and use that pane | It defeats the command the user put in the layout (this repository has `JAVA_HOME=…21`) |
+| C. Use the claude the layout launched as the worker (instruct with `send-text`) | The instruction was received (measured), but the environment variable cannot be set, so worker detection would have to switch to cwd, `workerArgs` and `--add-dir` are lost, and what runs in that pane differs per plugin. We would end up branching on a specific command (claude) |
+| Decide by whether the root pane is a shell prompt, then use it | M1: a plugin command may still be in the queue, so it is a race |
+| Block by the worktree path inside the Agent call's prompt | It conflicts with the principle that the hook does not judge by prompt wording. Role injection handles it first |
 
-## 5. 남은 것
+## 5. What remains
 
-- 메인 세션이 `EnterWorktree`로 linked worktree에 들어간 뒤 compact 하면, 그 시점의 cwd가 linked worktree라서 역할 문단이 다시 들어가지 않는다. 드문 경우라 받아들인다.
+- If the main session enters a linked worktree with `EnterWorktree` and then compacts, the cwd at that point is the linked worktree, so the role paragraph is not injected again. This is rare, so we accept it.
 
-- 레이아웃이 claude를 띄우면 그 탭에 idle claude가 하나 남는다. 사용자의 레이아웃이므로 손대지 않고, 보고에 워커의 탭 이름을 적는다.
-- `plugin log list`가 없는 오래된 herdr에서는 기다릴 핸들러가 없는 것으로 보고 `--quiet-ms`(2초) 뒤 탭을 만든다.
-- 다른 저장소의 스킬(executor)이 "서브에이전트"로 적은 문장은 그 저장소에서 고친다. 이 저장소는 역할 주입과 우선순위 문장으로 충돌을 푼다.
+- If the layout launches claude, an idle claude stays in that tab. It is the user's layout, so we leave it alone and write the worker's tab name in the report.
+- On an old herdr without `plugin log list`, we assume there is no handler to wait for and create the tab after `--quiet-ms` (2 seconds).
+- A sentence another repository's skill (executor) wrote as "subagent" is fixed in that repository. This repository resolves the conflict with role injection and the priority sentence.
