@@ -104,11 +104,11 @@ pub fn images_pending() -> String;                  // count of images not compl
 pub struct Geometry { pub cols: u16, pub rows: u16, pub cell_w: u32, pub cell_h: u32 }
 pub const TILE_BUDGET: usize = 12 * 1024 * 1024;
 pub fn tile_rows(g: &Geometry, budget: usize) -> u32;
-pub struct Placement { pub image: u32, pub src_y: u32, pub src_h: u32, pub row: u16 }
+pub struct Placement { pub image: u32, pub src_row: u32, pub rows: u32, pub row: u16 }   // whole cell rows
 pub fn layout(view_top_row: u64, view_rows: u32, tile_rows: u32, first_screen_row: u16, generation: u32) -> Vec<(u64, Placement)>;
 pub fn image_id(generation: u32, tile: u64) -> u32;
 pub fn transmit_shm(image: u32, shm_name: &str, w: u32, h: u32) -> String;
-pub fn place(p: &Placement, width_px: u32) -> String;
+pub fn place(p: &Placement, width_px: u32, cell_h: u32) -> String;
 pub fn unplace(image: u32) -> String;     // remove placements, keep data
 pub fn delete_image(image: u32) -> String; // free data
 pub fn delete_all() -> String;
@@ -126,7 +126,7 @@ pub fn bar_items() -> Vec<BarItem>;
 pub fn render_bar(title: &str, zoom: u32, cols: u16, hover: Option<usize>) -> (String, Vec<(u16, u16)>); // row-1 text, column range per item
 pub fn render_find(q: &script::FindQuery, count: i64, index: i64, cols: u16) -> String;
 // mac/  (cfg macOS)
-pub fn mac::viewer::run(source: &str) -> io::Result<()>;   // `peek viewer`
+pub fn mac::viewer::run(source: &str, path: Option<&Path>) -> io::Result<()>;   // `peek viewer [<file>]`
 pub struct mac::keychain::Keychain;                          // impl fetch::TokenStore, service "peek"
 pub fn mac::clipboard::copy_png(path: &Path) -> io::Result<()>;
 pub fn mac::watch::watch(path: &Path, on_change: impl Fn() + Send + 'static) -> io::Result<mac::watch::Watcher>;
@@ -184,7 +184,7 @@ pub fn mac::watch::watch(path: &Path, on_change: impl Fn() + Send + 'static) -> 
 
 Coordinates: the document is measured in terminal rows (device px / `cell_h`); the view top and every tile boundary are whole rows, so placements need no pixel offsets. Row 1 is the bar; the page starts at row 2.
 
-- [ ] **Step 1: Failing tests.** `tests/kitty.rs`: `tile_rows_from_budget` (176 x 51 cells of 17 x 37 px → `12 MiB / (176·17·4) / 37` rows), `tile_rows_at_least_one`, `layout_single_tile`, `layout_spans_two_tiles` (src rects inside each tile; rows continue), `source_rect_never_past_tile_end`, `image_ids_change_with_generation`, `transmit_shm_command` (exact `\x1b_Ga=t,i=…,f=32,s=…,v=…,t=s,S=…,q=2;<base64 name>\x1b\\`), `place_command` (cursor to the row, `a=p,i,p=1,x=0,y,w,h,C=1,q=2`). `tests/term.rs`: `parses_keys_and_arrows`, `parses_sgr_pixel_mouse` (press, release, move with button 35, wheel 64/65), `keeps_partial_sequence`, `parses_kitty_reply`, `geometry_without_pixels_falls_back`, `bar_layout_and_hover`.
+- [ ] **Step 1: Failing tests.** `tests/kitty.rs`: `tile_rows_from_budget` (176 x 51 cells of 17 x 37 px → `12 MiB / (176·17·4) / 37` rows), `tile_rows_at_least_one`, `layout_single_tile`, `layout_spans_two_tiles` (src rects inside each tile; rows continue), `source_rect_never_past_tile_end`, `image_ids_change_with_generation`, `transmit_shm_command` (exact `\x1b_Ga=t,i=…,f=32,s=…,v=…,t=s,S=…,q=1;<base64 name>\x1b\\`; errors such as `ENOMEM` are reported), `place_command` (cursor to the row, `a=p,i,p=1,x=0,y,w,h,C=1,q=2`, y and h in pixels from rows × `cell_h`). `tests/term.rs`: `parses_keys_and_arrows`, `parses_sgr_pixel_mouse` (press, release, move with button 35, wheel 64/65), `keeps_partial_sequence`, `parses_kitty_reply`, `geometry_without_pixels_falls_back`, `bar_layout_and_hover`.
 - [ ] **Step 2: Run** `cargo test --test kitty --test term`. Expected: FAIL.
 - [ ] **Step 3: Implement `kitty.rs` and `term.rs`;** run the tests to PASS.
 - [ ] **Step 4: Implement `render.rs`** from the spike (`evals/spike/rust/src/main.rs`): page scripts off, readiness by `script::ready`, capture of a CSS-px band into a shared-memory RGBA buffer (`CGImageAlphaInfo::PremultipliedLast`), resize that waits until `innerWidth` matches, zoom by `setPageZoom`.
