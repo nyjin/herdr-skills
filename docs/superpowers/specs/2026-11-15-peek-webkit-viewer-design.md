@@ -230,9 +230,10 @@ a mouse selection ends, by drag or double-click, it copies the text to the syste
 by default; `pbcopy` on macOS). peek uses that copy as its signal.
 
 User decisions: web addresses and hyperlinks keep Ctrl+click; paths open by selecting them (drag or double-click).
-Nothing changes what agents or programs print, and nothing sits between herdr and the pane's shell. When herdr starts
-matching link handler patterns against plain text (herdr discussion #609), paths open by Ctrl+click through the
-existing link handlers with no change in peek; select to open is then reconsidered (off by default or removed).
+Nothing changes what agents or programs print, and nothing sits between herdr and the pane's shell. If herdr starts
+matching plugin link handler patterns against plain text (asked in herdr discussions #4465, #4771 and #5010; #609
+asks for plain-text paths in general), paths open by Ctrl+click through the existing link handlers, and select to
+open is reconsidered then (off by default or removed).
 
 Checked by hand in a herdr 0.9.5 session (2026-11-16): a drag copied `2026-11-15-repo-layout-and-language-design.md`
 from a shell pane; a double-click copied `docs/superpowers/specs/` plus the Korean particle U+C5D0 written right after
@@ -255,10 +256,12 @@ the selection was made in. `copy_on_select` and `[[startup]]` hooks exist in her
 
 ### Which pane, which file
 
-1. The text is one line, 1 to 1024 characters, without control characters.
+1. The text is one line, 1 to 1024 characters, without control characters. A path the program itself broke over
+   two lines (Claude Code wraps long lines with real line breaks) is therefore not opened; selecting the part on one
+   line, such as the file name, still works.
 2. The panes of the tab shown in the focused workspace (`herdr pane list`), except peek's viewer panes, are read
    (`herdr pane read --source visible`). A pane matches when the text is in one of its rows, or in its rows joined
-   without line breaks (a path wrapped over two rows). The focused pane wins when several match, otherwise the first.
+   without line breaks (a long line the terminal wrapped; to be checked in the integration test). The focused pane wins when several match, otherwise the first.
    No match: the copy came from elsewhere (a browser, an editor) and nothing happens.
 3. The text is resolved for the matched pane like a click (path resolution above), with two additions:
    - **Trailing characters.** When the text as selected resolves to nothing, up to 4 characters are dropped from its
@@ -268,6 +271,11 @@ the selection was made in. `copy_on_select` and `[[startup]]` hooks exist in her
      selected.
    - **Folders.** A folder (absolute, `~/`, or joined onto the pane's working folder or its git root) opens as a
      folder page.
+   - **Path shape.** The form that resolves must contain a `/`, a file extension (`.md`, `.rs` ...) or a `:line`.
+     Selection has no link handler pattern in front of it, so without this a double-click on a word in prose would
+     open whatever file the word names: `peek` matches `herdr-plugins/peek/bin/peek` by its tail, `peeking` would
+     trim to it, `LICENSE` and `docs` exist. Those stay no-ops; a bare extensionless name opens by Ctrl+click on a
+     hyperlink only.
    Binary files other than images (a NUL byte in the first 8 KiB) are skipped. Nothing found: nothing happens, no
    notification (most selections are not paths).
 4. One result opens in the viewer beside the matched pane without taking focus, as a click does; several show the
@@ -290,11 +298,18 @@ the zoom in `~/.local/state/peek/`. The README says what it relies on and what i
 - A client attached over SSH copies to its own machine's clipboard, which peek cannot see.
 - Selecting a path only to copy it also opens it (without focus).
 
+Open item: newer macOS versions may ask the user before an app reads the pasteboard without a paste. macOS 15.6 asked
+nothing in the hand check; later versions are not checked.
+
+To check before the plan's tasks: that herdr leaves a detached child of a `[[startup]]` hook or of an action running,
+and records the hook as finished (a spike with a sleeper in the separate session).
+
 ### Tests
 
 - Neutral (`select` module): the text filter; pane matching (row, wrapped rows, several panes, focus preference, no
-  match); trailing-character trimming; resolution against temporary folders with Korean folder and file names in
-  both NFC and NFD form, particles after files, lines and folders; binary skip; the watcher's decision loop driven by
+  match); trailing-character trimming; the path-shape gate (`peek`, `peeking`, `LICENSE`, `docs` open nothing);
+  resolution against temporary folders with Korean folder and file names in both NFC and NFD form, particles after
+  files, lines and folders; binary skip; the watcher's decision loop driven by
   a fake clipboard (change count and string) and fake screens.
 - Folder page: order, the 500 cap, links, `..`.
 - macOS: the pasteboard reader; the lock and the exit on a dead socket.
