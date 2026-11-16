@@ -1,9 +1,11 @@
-//! `peek link` (the link handler action) and `peek action <name>` (herdr actions).
+//! `peek link` (the link handler action), `peek action <name>` (herdr actions) and `run_select` (a selection the
+//! clipboard watcher saw).
 //!
-//! Nothing opens without a click: `peek link` writes the source pane's state file and opens the viewer pane when
-//! the source pane has none. The viewer follows the state file.
+//! Nothing opens without a click or a selection: they write the source pane's state file and open the viewer pane
+//! when the source pane has none. The viewer follows the state file.
 use crate::herdr;
 use crate::resolve::{self, Context};
+use crate::select::{self, Screen};
 use crate::state::{self, Item, Mode, ViewState};
 use crate::target::{classify, Target};
 use std::fs::{self, OpenOptions};
@@ -66,6 +68,38 @@ pub fn run_action(name: &str, pane: &str) -> io::Result<()> {
     st.seq = next_seq(Some(&st));
     st.command = Some(name.to_string());
     state::write_state(&source, &st)
+}
+
+/// A selection herdr copied (`text`, from the clipboard): when a pane of the shown tab shows it and it resolves to
+/// files, open them beside that pane like a click. Returns what was opened (`<label> beside <pane>`), or `None` when
+/// the text is no path on screen.
+pub fn run_select(text: &str) -> io::Result<Option<String>> {
+    let Some(text) = select::usable(text) else { return Ok(None) };
+    let panes = herdr::panes()?;
+    let tab = panes.iter().find(|p| p.focused).map(|p| p.tab_id.clone());
+    let shown: Vec<(&herdr::PaneEntry, String)> = panes
+        .iter()
+        .filter(|p| tab.as_ref().is_none_or(|t| &p.tab_id == t))
+        .filter(|p| state::source_of_viewer(&p.pane_id).is_none())
+        .filter_map(|p| herdr::pane_text(&p.pane_id).ok().map(|text| (p, text)))
+        .collect();
+    let screens: Vec<Screen> =
+        shown.iter().map(|(p, text)| Screen { pane: &p.pane_id, focused: p.focused, text }).collect();
+    let Some(pane) = select::source_pane(text, &screens) else { return Ok(None) };
+    let ctx = context(&herdr::pane_get(pane)?);
+    let Some((found, line)) = select::resolve(text, &ctx) else { return Ok(None) };
+    let opened = format!("{} beside {pane}", label(&found[0], &ctx.home));
+    let items = found.into_iter().map(|p| Item { label: label(&p, &ctx.home), path: Some(p), url: None, line }).collect();
+    show(pane, items)?;
+    Ok(Some(opened))
+}
+
+/// `peek action select-to-open`: turns select to open on or off and says which.
+pub fn toggle_select() -> io::Result<()> {
+    let on = !state::select_enabled();
+    state::set_select_enabled(on)?;
+    herdr::notify(if on { "Select to open: on" } else { "Select to open: off" });
+    Ok(())
 }
 
 fn not_in_herdr(var: &str) -> io::Error {

@@ -39,7 +39,7 @@ menu and its keys (`s`, `f`, `m`); `~/.cache/peek` documents as markdown; Python
 
 Stays: one viewer per Claude pane, opened with `herdr plugin pane open --placement split --target-pane <source>
 --direction right --no-focus`; the state file per source pane (`~/.local/state/peek/<source>.json`) and the
-`.viewer` file; nothing opens without a click; the herdr action that toggles rendered/source; path resolution
+`.viewer` file; nothing opens without a click (0.6.0: or a selection); the herdr action that toggles rendered/source; path resolution
 (below, moved here unchanged).
 
 ## Requirements
@@ -61,8 +61,9 @@ herdr-plugins/peek/
 ```
 
 Subcommands: `peek link` (link handler action), `peek action <name>` (herdr actions: toggle, reload, find, zoom-in,
-zoom-out, zoom-reset, screenshot, browser, back), `peek viewer` (the pane), `peek auth <service>` (token
-registration).
+zoom-out, zoom-reset, screenshot, browser, back; and select-to-open, the switch), `peek viewer` (the pane), `peek auth
+<service>` (token registration); since 0.6.0 `peek watch [--spawn]` (the select-to-open watcher, or start it detached)
+and `peek select <text>` (one selection through select to open, as the watcher would; for tests and by hand).
 
 Modules. Platform-neutral ones build and test on Linux (CI is ubuntu); macOS-only ones sit behind
 `#[cfg(target_os = "macos")]` with their crates under `[target.'cfg(target_os = "macos")'.dependencies]`:
@@ -70,6 +71,8 @@ Modules. Platform-neutral ones build and test on Linux (CI is ubuntu); macOS-onl
 | Module | Job | Platform |
 |---|---|---|
 | `resolve` | clicked text → candidates (rules below) | neutral |
+| `select` | select to open: clipboard text → source pane → files ("Select to open") | neutral |
+| `watcher` | the select-to-open watcher: clipboard polling, lock, lifetime; the pasteboard reader is in `mac/clipboard` | neutral loop, macOS pasteboard |
 | `target` | classify: Jira, Confluence, PR, path with `:line` | neutral |
 | `state` | state files, viewer bookkeeping, zoom preference, `/tmp` layout | neutral |
 | `page` | markdown/source/image/HTML/API content → page HTML (template, theme, CSP) | neutral |
@@ -251,8 +254,8 @@ the selection was made in. `copy_on_select` and `[[startup]]` hooks exist in her
   socket stops answering twice in a row, 5 s apart (a live handoff reruns the startup hook under the new server).
 - Every 150 ms it reads the pasteboard's change count (`NSPasteboard.changeCount`), not its contents. Only when the
   count changed does it read the string, and only when select to open is on.
-- The text is kept in memory for the checks below and never written anywhere; `viewer.log` records an opened path
-  only.
+- The text is kept in memory for the checks below and never written anywhere; the watcher's `watch.log` in the state
+  folder records what it opened and its errors only.
 
 ### Which pane, which file
 

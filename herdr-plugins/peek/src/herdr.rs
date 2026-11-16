@@ -35,6 +35,40 @@ pub fn pane_get(pane: &str) -> io::Result<PaneInfo> {
     })
 }
 
+/// A pane in `herdr pane list`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PaneEntry {
+    pub pane_id: String,
+    pub tab_id: String,
+    pub focused: bool,
+}
+
+pub fn panes() -> io::Result<Vec<PaneEntry>> {
+    let result = call(&["pane", "list"])?;
+    let panes = result["panes"].as_array().ok_or_else(|| bad_reply("pane list", &result))?;
+    Ok(panes
+        .iter()
+        .filter_map(|p| {
+            Some(PaneEntry {
+                pane_id: p["pane_id"].as_str()?.to_string(),
+                tab_id: p["tab_id"].as_str().unwrap_or_default().to_string(),
+                focused: p["focused"].as_bool().unwrap_or(false),
+            })
+        })
+        .collect())
+}
+
+/// The rows the pane shows now (`herdr pane read --source visible`), as text.
+pub fn pane_text(pane: &str) -> io::Result<String> {
+    let args = ["pane", "read", pane, "--source", "visible", "--lines", "500"];
+    let out = output_within(&mut command(&args), TIMEOUT)?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        return Err(io::Error::other(format!("herdr pane read failed: {}", err.trim())));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
 pub fn pane_ids() -> io::Result<Vec<String>> {
     let result = call(&["pane", "list"])?;
     let panes = result["panes"].as_array().ok_or_else(|| bad_reply("pane list", &result))?;

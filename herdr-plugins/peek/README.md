@@ -2,18 +2,27 @@
 
 **English** | [한국어](README.ko.md)
 
-A herdr plugin that shows a file or link, rendered like a web page, in a pane to the right of the pane where you **Ctrl+click** it. Nothing opens without a click.
+A herdr plugin that shows a file or link, rendered like a web page, in a pane to the right of the pane where you **select** a path or **Ctrl+click** a link. Nothing opens without a selection or a click.
 
 macOS's own WebKit renders the page out of sight, and the picture is shown in the herdr pane with Kitty graphics, at the pane's full resolution. Nothing else has to be installed: no glow, bat, python3 or CLI tools.
 
-## What can be clicked
+## Opening things
 
-herdr passes a click to a plugin only while you hold **Control** (on macOS too: the mouse reports herdr gets cannot tell Command from a plain click), and only on two kinds of text:
+**Select a path**: drag over it or double-click it, in any pane (Claude Code, a shell, a log). herdr copies a mouse selection to the clipboard (`copy_on_select`, on by default); peek watches the clipboard, and when the copied text is shown in a pane of the current tab and names a file, it opens that file beside that pane.
+
+- The text must hold a `/`, a file extension or a `:line`, so a plain word (`peek`, `LICENSE`) never opens anything.
+- When the text as selected is no file, up to four characters are dropped from its end, so a Korean particle written right after a path does not get in the way (`kitty.rs:58` followed by one opens line 58). Korean folder and file names open as selected.
+- Folders open nothing (yet).
+- It cannot see: the same text selected twice in a row (herdr does not copy what the clipboard already holds), a path a program broke over two lines (select the part on one line, such as the file name), a herdr client attached over SSH, or `copy_on_select = false`.
+- Selecting a path only to copy it opens it too, without taking focus. Turn select to open off or on with the herdr action `peek: select to open on/off`.
+- The copied text is checked in memory and never stored; `~/.local/state/peek/watch.log` lists only what was opened. The watcher (`peek watch`, one per herdr server) starts with herdr or with the first peek run and stops with the server.
+
+**Ctrl+click a link.** herdr passes a click to a plugin only while you hold **Control** (on macOS too: the mouse reports herdr gets cannot tell Command from a plain click), and only on two kinds of text:
 
 - a web address (`http://`, `https://`) printed as plain text: Jira, Confluence and GitHub PR addresses open in peek, other addresses in the browser;
 - a hyperlink (OSC 8) that a program printed, whatever its target: `file:///Users/me/a.md`, `docs/a.md`, `src/app.rs:42`.
 
-A path printed as plain text is not clickable: herdr does not look for paths in plain text (requested in [herdr discussion #609](https://github.com/herdrdev/herdr/discussions/609)). Most programs print paths that way, Claude Code in a herdr pane included. Clicks also need herdr's mouse capture (`ui.mouse_capture`, on by default).
+A path printed as plain text is not clickable, because herdr does not look for paths in plain text (requested in [herdr discussion #609](https://github.com/herdrdev/herdr/discussions/609)); select it instead. Clicks also need herdr's mouse capture (`ui.mouse_capture`, on by default).
 
 | Opens | Shown as |
 |---|---|
@@ -25,7 +34,7 @@ A path printed as plain text is not clickable: herdr does not look for paths in 
 | GitHub PR `github.com/<o>/<r>/pull/<n>` | title, state, description and comments |
 
 - A shortened path (`docs/a.md`, `…/deep/a.md`, `a.md`) is looked up in four places at once: the pane's working folder, the session scratchpad, the session transcript and the git checkout. One candidate opens directly; several show a numbered list; none gives a herdr notification.
-- There is one viewer per pane you click in, opened without taking focus. It follows the shown file: when Claude (or you) saves it, the page is redrawn where you were reading.
+- There is one viewer per pane you select or click in, opened without taking focus. It follows the shown file: when Claude (or you) saves it, the page is redrawn where you were reading.
 - Page scripts never run. HTML inside markdown is shown but inert; HTML files keep their stylesheets, scripts stay off. Remote images load. Mermaid and math show as code.
 
 ## Keys and the top bar
@@ -75,7 +84,7 @@ Run them with the plugin's binary: `<plugin folder>/bin/peek auth …`. Without 
   browser/<document>.html                 the page handed to the browser
   pages/                                  pages the viewer loads
   viewer.log                              timings and errors of the last viewer run
-~/.local/state/peek/                      what each viewer shows, and the zoom
+~/.local/state/peek/                      what each viewer shows, the zoom, the select-to-open switch, watch.log
 ~/.cache/peek/links/                      fetched Jira, Confluence and PR pages and their images
 ```
 

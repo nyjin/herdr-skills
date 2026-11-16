@@ -61,7 +61,8 @@ impl Fixture {
     fn command(&self, args: &[&str]) -> Command {
         let mut cmd = Command::new(PEEK);
         cmd.args(args);
-        for key in ["HERDR_PANE_ID", "HERDR_BIN_PATH", "HERDR_PLUGIN_CLICKED_URL", "PEEK_HERDR", "PEEK_OPEN"] {
+        // HERDR_SOCKET_PATH too: with it, a peek run would start a clipboard watcher for the herdr running the tests.
+        for key in ["HERDR_PANE_ID", "HERDR_BIN_PATH", "HERDR_SOCKET_PATH", "HERDR_PLUGIN_CLICKED_URL", "PEEK_HERDR", "PEEK_OPEN"] {
             cmd.env_remove(key);
         }
         cmd.envs(self.env.iter().map(|(k, v)| (k.as_str(), v.as_str())));
@@ -414,4 +415,71 @@ fn state_and_viewer_files() {
     let _turn = STATE_ENV.lock().unwrap_or_else(|e| e.into_inner());
     let home = std::env::var("HOME").unwrap();
     assert_eq!(peek::state::state_dir(), Path::new(&home).join(".local/state/peek"));
+}
+
+/// Panes of a fake herdr for select to open: `(pane id, tab id, focused, what it shows)`.
+fn on_screen(f: &mut Fixture, panes: &[(&str, &str, bool, &str)]) {
+    let dir = f.root.join("screens");
+    fs::create_dir_all(&dir).unwrap();
+    let mut list = Vec::new();
+    for (id, tab, focused, text) in panes {
+        fs::write(dir.join(id.replace(':', "_")), text).unwrap();
+        list.push(serde_json::json!({"pane_id": id, "tab_id": tab, "focused": focused}));
+    }
+    f.set("FAKE_SCREENS", dir.to_str().unwrap());
+    f.set("FAKE_PANES_JSON", &serde_json::Value::Array(list).to_string());
+}
+
+#[test]
+fn select_opens_beside_the_pane_showing_it() {
+    let mut f = fixture();
+    // herdr leaves focus where it was when a selection is made in another pane.
+    on_screen(&mut f, &[(SRC, "w1:t1", false, "$ ls docs\ndocs/a.md\n"), ("w1:p9", "w1:t1", true, "claude\n")]);
+    let out = f.peek(&["select", "docs/a.md"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(String::from_utf8_lossy(&out.stdout).starts_with("opened "), "{}", String::from_utf8_lossy(&out.stdout));
+    assert_eq!(f.view().unwrap().items, vec![path_item(&f.doc, None)]);
+    let opens = f.opens();
+    assert_eq!(opens.len(), 1);
+    let target = &opens[0][opens[0].iter().position(|a| a == "--target-pane").unwrap() + 1];
+    assert_eq!(target, SRC);
+}
+
+#[test]
+fn select_ignores_text_not_on_screen() {
+    let mut f = fixture();
+    // Copied in a browser or an editor: no pane shows it.
+    on_screen(&mut f, &[(SRC, "w1:t1", true, "$ echo hi\nhi\n")]);
+    let out = f.peek(&["select", "docs/a.md"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(f.view().is_none());
+    assert!(f.opens().is_empty());
+}
+
+#[test]
+fn select_looks_only_at_the_shown_tab_and_not_at_viewers() {
+    let mut f = fixture();
+    f.write_viewer("w1:v1");
+    on_screen(
+        &mut f,
+        &[(SRC, "w1:t1", true, "$\n"), ("w1:v1", "w1:t1", false, "docs/a.md\n"), ("w2:p1", "w2:t1", false, "docs/a.md\n")],
+    );
+    let out = f.peek(&["select", "docs/a.md"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(f.view().is_none());
+    assert!(f.opens().is_empty());
+}
+
+#[test]
+fn select_to_open_action_toggles_and_says_so() {
+    let f = fixture();
+    let switch = || fs::read_to_string(f.state.join("select")).unwrap();
+    assert!(f.peek(&["action", "select-to-open"]).status.success());
+    assert_eq!(switch(), "off");
+    assert!(f.peek(&["action", "select-to-open"]).status.success());
+    assert_eq!(switch(), "on");
+    let notes: Vec<String> = f.called(&["notification", "show"]).into_iter().map(|c| c.join(" ")).collect();
+    assert_eq!(notes.len(), 2);
+    assert!(notes[0].ends_with("Select to open: off"), "{notes:?}");
+    assert!(notes[1].ends_with("Select to open: on"), "{notes:?}");
 }

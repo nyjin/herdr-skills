@@ -3,7 +3,8 @@
 //!
 //! The state folder holds, per source pane `<source>` (a pane id, `/` written as `_`): `<source>.json` (the
 //! `ViewState`), `<source>.viewer` (the viewer's pane id) and, while `peek link` checks for a viewer,
-//! `<source>.lock`. `zoom` holds the zoom preference.
+//! `<source>.lock`. `zoom` holds the zoom preference, `select` the select-to-open switch, `watch-*.lock` and
+//! `watch.log` belong to the clipboard watcher (`watcher`).
 use serde::{Deserialize, Serialize};
 use std::fs::{self, DirBuilder};
 use std::io;
@@ -147,6 +148,15 @@ pub fn zoom() -> u32 {
 /// Saves the zoom preference, held within 50..=200.
 pub fn set_zoom(percent: u32) -> io::Result<()> {
     write_atomic(&state_dir().join("zoom"), percent.clamp(ZOOM_MIN, ZOOM_MAX).to_string().as_bytes())
+}
+
+/// Whether select to open is on: on unless the `select` file says `off`.
+pub fn select_enabled() -> bool {
+    fs::read_to_string(state_dir().join("select")).map_or(true, |text| text.trim() != "off")
+}
+
+pub fn set_select_enabled(on: bool) -> io::Result<()> {
+    write_atomic(&state_dir().join("select"), if on { b"on" } else { b"off" })
 }
 
 /// Writes through a temp file in the same folder and renames it over `path`, so a reader never sees half a file.

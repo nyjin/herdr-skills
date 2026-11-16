@@ -1,8 +1,8 @@
 id = "nyjin.peek"
 name = "peek"
-version = "0.5.0"
+version = "0.6.0"
 min_herdr_version = "0.9.3"
-description = "Ctrl+click a Jira, Confluence or GitHub PR address, or a hyperlinked path, to read it, rendered by WebKit, in the pane beside it"
+description = "Select a path, or Ctrl+click a Jira, Confluence or GitHub PR address or a hyperlink, to read it, rendered by WebKit, in the pane beside it"
 platforms = ["macos"]
 
 # The viewer runs from the plugin root by absolute path: the pane's cwd is the source pane's folder.
@@ -12,10 +12,20 @@ title = "peek"
 placement = "split"
 command = ["sh", "-c", "exec \"$HERDR_PLUGIN_ROOT/bin/peek\" viewer"]
 
+# Select to open: a watcher reads the clipboard herdr's copy_on_select writes. It starts detached and returns, so the
+# hook ends at once (src/watcher.rs).
+[[startup]]
+command = ["bin/peek", "watch", "--spawn"]
+
 [[actions]]
 id = "open-link"
 title = "peek: open the clicked path or link"
 command = ["bin/peek", "link"]
+
+[[actions]]
+id = "select-to-open"
+title = "peek: select to open on/off"
+command = ["bin/peek", "action", "select-to-open"]
 
 # One action per viewer command (src/link.rs ACTIONS), so each can be bound to a key; from the viewer pane or its
 # Claude pane.
