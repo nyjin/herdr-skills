@@ -156,11 +156,12 @@ The clicked string is judged after stripping `file://`, a trailing `:line[:col]`
 
 ## Top bar
 
-One text row: file name · `⟳` reload · `Source` · `⌕` find · `Shot` · `↗` open in browser · `…` (changed
-2026-11-17 at the user's request: symbols for reload, find and open external; zoom moved behind `…`). `…` turns the
-row into the zoom row: `−` · percentage · `+` · `Reset` · `✕`; `Esc` or `✕` returns to the bar, and zooming leaves it
-open for the next click. Hovering an item shows a tooltip with its name and key (`Reload (r)`). Clicking runs it. A
-narrow pane shows keys instead of symbols. A dropdown under `…` was not built: text over the page picture needs the
+One text row: file name, then `⟳ Reload` · `⌕ Find` · `</> Source` · `↗ Browser` · `… More`, one column apart
+(changed 2026-11-17 at the user's request: a symbol and a word per item, this order, zoom and screenshot behind
+`…`). The source button names what it switches to: `</> Source` while the page is rendered, `◉ View` while the
+source shows. `… More` turns the row into: `−` · percentage · `+` · `Reset` · `⎙ Screenshot` · `✕`; `Esc` or `✕`
+returns to the bar, and zooming leaves it open for the next click. Hovering an item shows a tooltip with its name and
+key (`Reload (r)`). Clicking runs it. A narrow pane shows the symbols without the words. A dropdown under `…` was not built: text over the page picture needs the
 picture below the cell layer, which herdr's rendering of Kitty placements was not checked for.
 
 While finding, the row becomes the find row, laid out after editors' find widgets (VS Code, Chrome): `⌕`, an
@@ -184,7 +185,9 @@ top. Measured re-layout 38-40 ms plus capture.
 
 ## Screenshot
 
-The current screen as PNG, also copied to the clipboard; a herdr notification gives the path.
+The current screen as PNG, also copied to the clipboard. A toast in the middle of row 1 (an inverted pill, like
+herdr's own "copied to clipboard") gives the path for 5 s, the middle of a long path cut so the file name stays; a
+click on row 1 takes it away sooner. No herdr notification (user request, 2026-11-17).
 
 ```
 /tmp/peek-<uid>/                         0700, created and checked to be ours (not a link, owned by the user)

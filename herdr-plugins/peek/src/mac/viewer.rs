@@ -69,6 +69,8 @@ struct Viewer {
     bar: Vec<(u16, u16)>,
     /// The zoom row (`…`) shows in place of the bar.
     menu: bool,
+    /// A toast on row 1 (text, id) until its time is up or row 1 is clicked.
+    toast: Option<(String, u64)>,
     /// Where the terminal cursor stands while the find field takes typing.
     caret: Option<u16>,
     title: String,
@@ -152,6 +154,7 @@ pub fn run(source: &str, path: Option<&Path>) -> io::Result<()> {
             hover: None,
             bar: Vec::new(),
             menu: false,
+            toast: None,
             caret: None,
             title: "peek".into(),
             shm_seq: 0,
@@ -227,18 +230,20 @@ fn apply_geometry() {
     log(serde_json::json!({"ev": "measure", "cols": g.cols, "rows": g.rows, "cell": [g.cell_w, g.cell_h]}));
 }
 
-/// Row 1: the find row while finding, the zoom row while `…` is open, else the bar; the cursor stands in the find
-/// field or is hidden.
+/// Row 1: the find row while finding, a toast while one shows, the zoom row while `…` is open, else the bar; the
+/// cursor stands in the find field or is hidden.
 fn draw_bar() {
     let (text, caret) = with(|v| {
         let (text, ranges, caret) = if let Some(f) = &v.find {
             let row = term::render_find(&f.q, f.count, f.index, v.g.cols, v.hover);
             (row.text, row.buttons, row.caret)
+        } else if let Some((text, _)) = &v.toast {
+            (term::render_toast(text, v.g.cols), Vec::new(), None)
         } else if v.menu {
             let (text, ranges) = term::render_more(&v.title, v.zoom, v.g.cols, v.hover);
             (text, ranges, None)
         } else {
-            let (text, ranges) = term::render_bar(&v.title, v.g.cols, v.hover);
+            let (text, ranges) = term::render_bar(&v.title, v.mode == Mode::Source, v.g.cols, v.hover);
             (text, ranges, None)
         };
         v.bar = ranges;
@@ -759,11 +764,32 @@ fn screenshot() {
         r.snapshot_png(top_css, h_css, path, move |res| match res {
             Ok(()) => {
                 let copied = super::clipboard::copy_png(&shown).is_ok();
-                herdr::notify(&format!("Screenshot saved: {}{}", shown.display(), if copied { " (copied)" } else { "" }));
+                let (head, tail) = ("\u{25cf} Screenshot saved to ", if copied { " \u{b7} copied to clipboard" } else { "" });
+                let room = with(|v| v.g.cols as usize).saturating_sub(2 + term::display_width(head) + term::display_width(tail));
+                toast(format!("{head}{}{tail}", term::shorten_path(&shown.to_string_lossy(), room)));
                 log(serde_json::json!({"ev": "screenshot", "path": shown}));
             }
-            Err(e) => herdr::notify(&format!("Screenshot failed: {e}")),
+            Err(e) => toast(format!("\u{2715} Screenshot failed: {e}")),
         });
+    });
+}
+
+/// How long a toast stays on row 1.
+const TOAST_MS: u64 = 5000;
+
+/// Show `text` on row 1 for `TOAST_MS`; a click on row 1 takes it away sooner.
+fn toast(text: String) {
+    let id = with(|v| {
+        let id = v.toast.as_ref().map_or(0, |(_, id)| id + 1);
+        v.toast = Some((text, id));
+        id
+    });
+    draw_bar();
+    after(TOAST_MS, move || {
+        if with(|v| v.toast.as_ref().is_some_and(|(_, shown)| *shown == id)) {
+            with(|v| v.toast = None);
+            draw_bar();
+        }
     });
 }
 
@@ -926,7 +952,7 @@ fn close_menu() {
 
 /// A click on item `n` of the row 1 shows now.
 fn row_click(n: usize) {
-    let (finding, menu) = with(|v| (v.find.is_some(), v.menu));
+    let (finding, menu, source) = with(|v| (v.find.is_some(), v.menu, v.mode == Mode::Source));
     if finding {
         match term::find_items().get(n).map(|i| i.action) {
             Some(option @ ("case" | "word" | "regex")) => find_option(option),
@@ -941,7 +967,7 @@ fn row_click(n: usize) {
             Some(action) => act(action),
             None => {}
         }
-    } else if let Some(item) = term::bar_items().get(n) {
+    } else if let Some(item) = term::bar_items(source).get(n) {
         act(item.action);
     }
 }
@@ -994,6 +1020,10 @@ fn on_mouse(m: term::Mouse, t: f64) {
             if with(|v| std::mem::replace(&mut v.hover, item) != item) {
                 draw_bar();
             }
+        }
+        MouseKind::Press if on_bar && with(|v| v.toast.is_some() && v.find.is_none()) => {
+            with(|v| v.toast = None);
+            draw_bar();
         }
         MouseKind::Press if on_bar => {
             if let Some(n) = item {

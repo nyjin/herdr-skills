@@ -82,55 +82,79 @@ fn parses_shift_enter() {
 }
 
 #[test]
-fn bar_layout_and_hover() {
-    let (text, ranges) = render_bar("plan.md", 120, None);
-    assert_eq!(ranges.len(), bar_items().len());
-    for w in ranges.windows(2) {
-        assert!(w[0].1 < w[1].0, "{ranges:?}");
+fn bar_order_icons_and_words() {
+    let actions: Vec<&str> = bar_items(false).iter().map(|i| i.action).collect();
+    assert_eq!(actions, ["reload", "find", "toggle", "browser", "more"]);
+    let (text, ranges) = render_bar("plan.md", false, 120, None);
+    assert_eq!(ranges.len(), 5);
+    for cell in ["\u{27f3} Reload", "\u{2315} Find", "</> Source", "\u{2197} Browser", "\u{2026} More"] {
+        assert!(text.contains(cell), "{cell} missing from {text:?}");
     }
+    assert!(text.contains("plan.md") && !text.contains('%'));
     assert!(ranges.last().unwrap().1 <= 120);
-    for glyph in ["plan.md", "\u{27f3}", "\u{2315}", "\u{2197}", "\u{2026}", "Source", "Shot"] {
-        assert!(text.contains(glyph), "{glyph} missing from {text:?}");
-    }
-    // zoom moved behind `…`
-    assert!(!text.contains('%'));
     // hovering an item shows its tooltip (name and key) and marks the item
-    let (hover, _) = render_bar("plan.md", 120, Some(0));
+    let (hover, _) = render_bar("plan.md", false, 120, Some(0));
     assert!(hover.contains("Reload (r)") && hover.contains("\x1b[7m"));
 }
 
 #[test]
-fn a_symbol_takes_one_column() {
-    let (_, ranges) = render_bar("plan.md", 120, None);
-    // " ⟳ " is three columns although "⟳" is three bytes
-    assert_eq!(ranges[0].1 - ranges[0].0 + 1, 3);
+fn the_source_button_turns_into_view() {
+    let (rendered, _) = render_bar("plan.md", false, 120, None);
+    let (source, _) = render_bar("plan.md", true, 120, None);
+    assert!(rendered.contains("</> Source") && !rendered.contains("View"));
+    assert!(source.contains("\u{25c9} View") && !source.contains("Source"));
+    let tip = |showing_source: bool| tooltip(&bar_items(showing_source)[2]);
+    assert_eq!((tip(false).as_str(), tip(true).as_str()), ("Show source (t)", "Show rendered (t)"));
 }
 
 #[test]
-fn bar_fits_a_narrow_pane() {
-    let (_, ranges) = render_bar("a-very-long-document-name-that-does-not-fit.md", 30, None);
-    assert!(ranges.last().unwrap().1 <= 30, "{ranges:?}");
+fn items_stand_an_even_distance_apart() {
+    for (_, ranges) in [render_bar("plan.md", false, 120, None), render_bar("plan.md", true, 120, None)] {
+        let gaps: Vec<u16> = ranges.windows(2).map(|w| w[1].0 - w[0].1).collect();
+        assert!(gaps.iter().all(|g| *g == 2), "{ranges:?}");
+    }
+}
+
+#[test]
+fn a_symbol_takes_one_column() {
+    let (_, ranges) = render_bar("plan.md", false, 120, None);
+    // " ⟳ Reload " is ten columns although "⟳" is three bytes
+    assert_eq!(ranges[0].1 - ranges[0].0 + 1, 10);
+}
+
+#[test]
+fn a_narrow_bar_keeps_the_icons() {
+    let (text, ranges) = render_bar("a-very-long-document-name-that-does-not-fit.md", false, 40, None);
+    assert!(ranges.last().unwrap().1 <= 40, "{ranges:?}");
+    assert!(text.contains("\u{27f3}") && !text.contains("Reload"));
 }
 
 #[test]
 fn tooltips_name_the_key() {
-    let tips: Vec<String> = bar_items().iter().chain(&more_items()).chain(&find_items()).map(tooltip).collect();
-    for tip in ["Open in browser (o)", "More: zoom", "Zoom in (+)", "Zoom out (-)", "Next match (Enter)", "Close (Esc)"] {
+    let items = bar_items(false).into_iter().chain(bar_items(true)).chain(more_items()).chain(find_items());
+    let tips: Vec<String> = items.map(|i| tooltip(&i)).collect();
+    for tip in [
+        "Open in browser (o)",
+        "More: zoom, screenshot",
+        "Zoom in (+)",
+        "Zoom out (-)",
+        "Screenshot (s)",
+        "Next match (Enter)",
+        "Close (Esc)",
+    ] {
         assert!(tips.contains(&tip.to_string()), "{tip} missing from {tips:?}");
     }
 }
 
 #[test]
-fn more_row_puts_the_zoom_between_its_buttons() {
+fn more_row_holds_zoom_and_screenshot() {
     let (text, ranges) = render_more("plan.md", 110, 120, None);
     assert_eq!(ranges.len(), more_items().len());
-    let at = |col: u16| {
-        // column of "110%" on the row, counted the way the row is laid out
-        let plain: String = text.replace("\x1b[1;1H\x1b[2K", "");
-        plain.chars().skip(col as usize - 1).take(4).collect::<String>()
-    };
-    assert_eq!(at(ranges[0].1 + 1), "110%");
-    assert!(ranges[0].1 + 5 < ranges[1].0 + 1, "{ranges:?}");
+    assert!(text.contains("110%") && text.contains("\u{2399} Screenshot"));
+    // the percentage stands between zoom out and zoom in
+    let plain = text.replace("\x1b[1;1H\x1b[2K", "");
+    let between: String = plain.chars().skip(ranges[0].1 as usize).take((ranges[1].0 - ranges[0].1 - 1) as usize).collect();
+    assert_eq!(between.trim(), "110%");
     assert!(ranges.last().unwrap().1 <= 120);
 }
 
@@ -186,4 +210,26 @@ fn a_long_query_shows_its_end() {
 fn caret_shows_or_hides_the_cursor() {
     assert_eq!(caret(Some(9)), "\x1b[1;9H\x1b[5 q\x1b[?25h");
     assert_eq!(caret(None), "\x1b[?25l");
+}
+
+#[test]
+fn a_toast_stands_centred_in_a_pill() {
+    let row = render_toast("Screenshot saved", 40);
+    let plain = row.replace("\x1b[1;1H\x1b[2K", "");
+    let lead = plain.chars().take_while(|c| *c == ' ').count();
+    // " Screenshot saved " is 18 columns: (40 - 18) / 2 = 11 spaces before it
+    assert_eq!(lead, 11, "{row:?}");
+    assert!(row.contains("\x1b[7m Screenshot saved \x1b[27m"));
+}
+
+#[test]
+fn a_long_path_keeps_its_start_and_file_name() {
+    let path = "/tmp/peek-501/-Users-nyjin-src-herdr-skills-peek/18b74fa6-f5db-42ec/screenshots/20261117-101500-plan.md.png";
+    let short = shorten_path(path, 50);
+    assert!(display_width(&short) <= 50, "{short}");
+    assert!(short.starts_with("/tmp/") && short.ends_with("/20261117-101500-plan.md.png"), "{short}");
+    assert!(short.contains('\u{2026}'));
+    assert_eq!(shorten_path("/tmp/a.png", 50), "/tmp/a.png");
+    // too narrow even for the file name: its end
+    assert!(display_width(&shorten_path(path, 12)) <= 12);
 }

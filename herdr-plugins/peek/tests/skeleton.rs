@@ -3,7 +3,7 @@ use std::process::Command;
 
 #[test]
 fn every_action_has_a_bar_item_or_key() {
-    let rows = peek::term::bar_items().into_iter().chain(peek::term::more_items());
+    let rows = peek::term::bar_items(false).into_iter().chain(peek::term::bar_items(true)).chain(peek::term::more_items());
     let clickable: Vec<&str> = rows.map(|b| b.action).collect();
     for action in peek::link::ACTIONS {
         // back (`h`, Backspace) is a key only
