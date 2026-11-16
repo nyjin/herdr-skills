@@ -26,12 +26,12 @@ const FIRST_ROW: u16 = 2;
 const NOTCH: i64 = 3;
 const ZOOM_STEP: u32 = 10;
 
+/// The find row, while open. Typing always goes into its query, as in an editor's find field: Enter and Down step
+/// to the next match, Shift+Enter and Up to the previous one, Esc closes.
 struct Find {
     q: FindQuery,
     count: i64,
     index: i64,
-    /// Typing goes into the query; otherwise `n`/`N` step and other keys work as usual.
-    editing: bool,
 }
 
 struct Viewer {
@@ -63,8 +63,14 @@ struct Viewer {
     watcher: Option<super::watch::Watcher>,
     loaded_at: f64,
     seq: u128,
+    /// The item under the pointer on row 1, an index into whichever row shows (bar, zoom row or find row).
     hover: Option<usize>,
+    /// Column ranges of the items row 1 shows now.
     bar: Vec<(u16, u16)>,
+    /// The zoom row (`…`) shows in place of the bar.
+    menu: bool,
+    /// Where the terminal cursor stands while the find field takes typing.
+    caret: Option<u16>,
     title: String,
     shm_seq: u64,
     log: Option<File>,
@@ -145,6 +151,8 @@ pub fn run(source: &str, path: Option<&Path>) -> io::Result<()> {
             seq: 0,
             hover: None,
             bar: Vec::new(),
+            menu: false,
+            caret: None,
             title: "peek".into(),
             shm_seq: 0,
             log,
@@ -196,7 +204,7 @@ fn terminal_on() {
 }
 
 fn quit() -> ! {
-    out(&format!("{}{}\x1b[?25h\x1b[?1049l", kitty::delete_all(), term::MOUSE_OFF));
+    out(&format!("{}{}\x1b[0 q\x1b[?25h\x1b[?1049l", kitty::delete_all(), term::MOUSE_OFF));
     if let Some(t) = ORIG.get() {
         unsafe { libc::tcsetattr(0, libc::TCSANOW, t) };
     }
@@ -219,15 +227,25 @@ fn apply_geometry() {
     log(serde_json::json!({"ev": "measure", "cols": g.cols, "rows": g.rows, "cell": [g.cell_w, g.cell_h]}));
 }
 
+/// Row 1: the find row while finding, the zoom row while `…` is open, else the bar; the cursor stands in the find
+/// field or is hidden.
 fn draw_bar() {
-    let finding = with(|v| v.find.as_ref().map(|f| term::render_find(&f.q, f.count, f.index, v.g.cols)));
-    if let Some(row) = finding {
-        let cursor = with(|v| v.find.as_ref().is_some_and(|f| f.editing));
-        return out(&format!("{row}{}", if cursor { "\x1b[1;8H" } else { "" }));
-    }
-    let (text, ranges) = with(|v| term::render_bar(&v.title, v.zoom, v.g.cols, v.hover));
-    with(|v| v.bar = ranges);
-    out(&text);
+    let (text, caret) = with(|v| {
+        let (text, ranges, caret) = if let Some(f) = &v.find {
+            let row = term::render_find(&f.q, f.count, f.index, v.g.cols, v.hover);
+            (row.text, row.buttons, row.caret)
+        } else if v.menu {
+            let (text, ranges) = term::render_more(&v.title, v.zoom, v.g.cols, v.hover);
+            (text, ranges, None)
+        } else {
+            let (text, ranges) = term::render_bar(&v.title, v.g.cols, v.hover);
+            (text, ranges, None)
+        };
+        v.bar = ranges;
+        v.caret = caret;
+        (text, caret)
+    });
+    out(&format!("{text}{}", term::caret(caret)));
 }
 
 fn doc_rows(v: &Viewer) -> u64 {
@@ -451,6 +469,8 @@ fn draw(t_key: f64) {
             s.push_str(&kitty::place(p, w, v.g.cell_h));
         }
         v.placed = new;
+        // placing tiles moves the cursor: put it back in the find field (or keep it hidden)
+        s.push_str(&term::caret(v.caret));
         (v.view_top, v.ready.len())
     });
     out(&s);
@@ -600,9 +620,18 @@ fn act(action: &str) {
             }
         }
         "find" => {
-            with(|v| match v.find.as_mut() {
-                Some(f) => f.editing = true,
-                None => v.find = Some(Find { q: FindQuery::default(), count: 0, index: 0, editing: true }),
+            with(|v| {
+                if v.find.is_none() {
+                    v.find = Some(Find { q: FindQuery::default(), count: 0, index: 0 });
+                    v.hover = None;
+                }
+            });
+            draw_bar();
+        }
+        "more" => {
+            with(|v| {
+                v.menu = true;
+                v.hover = None;
             });
             draw_bar();
         }
@@ -656,7 +685,11 @@ fn run_find() {
 }
 
 fn close_find() {
-    with(|v| v.find = None);
+    with(|v| {
+        v.find = None;
+        v.hover = None;
+    });
+    draw_bar();
     let r = with(|v| v.r.clone());
     r.eval(&script::find_clear(), |_| {
         invalidate();
@@ -836,54 +869,89 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// Keys while the find row takes typing; returns true when the key was used.
+/// Keys while the find row is open; returns true when the key was used. Typing goes into the query; page keys
+/// (PageUp, PageDown, Home, End) and anything else fall through to the page.
 fn on_find_key(k: &Key) -> bool {
-    let editing = with(|v| v.find.as_ref().is_some_and(|f| f.editing));
-    let finding = with(|v| v.find.is_some());
-    if !finding {
+    if with(|v| v.find.is_none()) {
         return false;
     }
-    let mut rerun = true;
     match k {
-        Key::Esc => {
-            close_find();
-            return true;
+        Key::Esc => close_find(),
+        Key::Alt('c') => find_option("case"),
+        Key::Alt('w') => find_option("word"),
+        Key::Alt('r') => find_option("regex"),
+        Key::Enter | Key::Down => find_step(1),
+        Key::ShiftEnter | Key::Up => find_step(-1),
+        Key::Backspace => find_edit(|text| {
+            text.pop();
+        }),
+        Key::Char(c) => find_edit(|text| text.push(*c)),
+        _ => return false,
+    }
+    true
+}
+
+/// Turn a find option on or off (`FindQuery::toggle`: whole word and regular expression exclude each other).
+fn find_option(name: &str) {
+    with(|v| v.find.as_mut().map(|f| f.q.toggle(name)));
+    draw_bar();
+    run_find();
+}
+
+fn find_step(by: i64) {
+    with(|v| v.find.as_mut().map(|f| f.index += by));
+    draw_bar();
+    run_find();
+}
+
+fn find_edit(change: impl FnOnce(&mut String)) {
+    with(|v| {
+        if let Some(f) = v.find.as_mut() {
+            change(&mut f.q.text);
+            f.index = 0;
         }
-        Key::Alt('c') => with(|v| v.find.as_mut().map(|f| f.q.case = !f.q.case)).map(|_| ()).unwrap_or(()),
-        Key::Alt('w') => with(|v| v.find.as_mut().map(|f| f.q.word = !f.q.word)).map(|_| ()).unwrap_or(()),
-        Key::Alt('r') => with(|v| v.find.as_mut().map(|f| f.q.regex = !f.q.regex)).map(|_| ()).unwrap_or(()),
-        Key::Enter if editing => with(|v| {
-            if let Some(f) = v.find.as_mut() {
-                f.editing = false;
-                f.index += 1;
-            }
-        }),
-        Key::Backspace if editing => with(|v| {
-            if let Some(f) = v.find.as_mut() {
-                f.q.text.pop();
-                f.index = 0;
-            }
-        }),
-        Key::Char(c) if editing => with(|v| {
-            if let Some(f) = v.find.as_mut() {
-                f.q.text.push(*c);
-                f.index = 0;
-            }
-        }),
-        Key::Char('n') => with(|v| v.find.as_mut().map(|f| f.index += 1)).unwrap_or(()),
-        Key::Char('N') => with(|v| v.find.as_mut().map(|f| f.index -= 1)).unwrap_or(()),
-        _ => rerun = false,
+    });
+    draw_bar();
+    run_find();
+}
+
+/// Leave the zoom row for the bar.
+fn close_menu() {
+    with(|v| {
+        v.menu = false;
+        v.hover = None;
+    });
+    draw_bar();
+}
+
+/// A click on item `n` of the row 1 shows now.
+fn row_click(n: usize) {
+    let (finding, menu) = with(|v| (v.find.is_some(), v.menu));
+    if finding {
+        match term::find_items().get(n).map(|i| i.action) {
+            Some(option @ ("case" | "word" | "regex")) => find_option(option),
+            Some("prev") => find_step(-1),
+            Some("next") => find_step(1),
+            Some("close") => close_find(),
+            _ => {}
+        }
+    } else if menu {
+        match term::more_items().get(n).map(|i| i.action) {
+            Some("close") => close_menu(),
+            Some(action) => act(action),
+            None => {}
+        }
+    } else if let Some(item) = term::bar_items().get(n) {
+        act(item.action);
     }
-    if rerun {
-        draw_bar();
-        run_find();
-    }
-    rerun || editing
 }
 
 fn on_key(k: Key, t: f64) {
     if on_find_key(&k) {
         return;
+    }
+    if k == Key::Esc && with(|v| v.menu) {
+        return close_menu();
     }
     let page = with(|v| view_rows(v) as i64 - 2).max(1);
     match k {
@@ -914,12 +982,11 @@ fn on_key(k: Key, t: f64) {
 }
 
 fn on_mouse(m: term::Mouse, t: f64) {
-    let (cell_w, cell_h, cols) = with(|v| (v.g.cell_w.max(1), v.g.cell_h.max(1), v.g.cols));
+    let (cell_w, cell_h) = with(|v| (v.g.cell_w.max(1), v.g.cell_h.max(1)));
     let row = (m.y_px / cell_h) as u16 + 1;
     let col = (m.x_px / cell_w) as u16 + 1;
     let on_bar = row == BAR_ROW;
-    let finding = with(|v| v.find.is_some());
-    let item = if on_bar && !finding { with(|v| v.bar.iter().position(|(a, b)| (*a..=*b).contains(&col))) } else { None };
+    let item = if on_bar { with(|v| v.bar.iter().position(|(a, b)| (*a..=*b).contains(&col))) } else { None };
     match m.kind {
         MouseKind::WheelUp => scroll(-NOTCH, t),
         MouseKind::WheelDown => scroll(NOTCH, t),
@@ -928,21 +995,9 @@ fn on_mouse(m: term::Mouse, t: f64) {
                 draw_bar();
             }
         }
-        MouseKind::Press if on_bar && finding => {
-            let hit = term::find_toggles(cols).iter().position(|(a, b)| (*a..=*b).contains(&col));
-            let key = match hit {
-                Some(0) => Some(Key::Alt('c')),
-                Some(1) => Some(Key::Alt('w')),
-                Some(2) => Some(Key::Alt('r')),
-                _ => None,
-            };
-            if let Some(k) = key {
-                on_find_key(&k);
-            }
-        }
         MouseKind::Press if on_bar => {
             if let Some(n) = item {
-                act(term::bar_items()[n].action);
+                row_click(n);
             }
         }
         MouseKind::Press if m.button == 0 => click(m.x_px, m.y_px),

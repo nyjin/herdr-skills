@@ -10,6 +10,25 @@ pub struct FindQuery {
     pub regex: bool,
 }
 
+impl FindQuery {
+    /// Turn option `case`, `word` or `regex` on or off. Whole word and regular expression exclude each other, as in
+    /// IntelliJ's and Xcode's find (a pattern sets its own word bounds); match case goes with either.
+    pub fn toggle(&mut self, option: &str) {
+        match option {
+            "case" => self.case = !self.case,
+            "word" => {
+                self.word = !self.word;
+                self.regex &= !self.word;
+            }
+            "regex" => {
+                self.regex = !self.regex;
+                self.word &= !self.regex;
+            }
+            _ => {}
+        }
+    }
+}
+
 /// A word character for "whole word": any letter, combining mark or digit (not only ASCII), or `_`.
 const WORD_CHAR: &str = r"[\p{L}\p{M}\p{N}_]";
 

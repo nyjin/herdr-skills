@@ -1,5 +1,5 @@
-//! Terminal side of the viewer: input parsing (keys, SGR pixel mouse, Kitty replies), pane geometry, the top bar
-//! and the find row. (Tasks 5 and 6)
+//! Terminal side of the viewer: input parsing (keys, SGR pixel mouse, Kitty replies), pane geometry, and row 1:
+//! the top bar, the zoom row behind its `…`, and the find row.
 use crate::kitty::Geometry;
 use crate::script::FindQuery;
 
@@ -15,6 +15,8 @@ pub enum Key {
     Backspace,
     Esc,
     Enter,
+    /// Shift+Enter, from terminals that tell it apart (`CSI 13;2u` or `CSI 27;2;13~`).
+    ShiftEnter,
     Tab,
     Alt(char),
 }
@@ -114,6 +116,7 @@ fn escape(s: &[u8]) -> Option<(Option<Input>, usize)> {
                 (b"", b'F') | (b"4", b'~') => Some(Key::End),
                 (b"5", b'~') => Some(Key::PageUp),
                 (b"6", b'~') => Some(Key::PageDown),
+                (b"13;2", b'u') | (b"27;2;13", b'~') => Some(Key::ShiftEnter),
                 _ => None,
             };
             Some((key.map(Input::Key), end + 1))
@@ -170,44 +173,66 @@ pub fn pixel_size_known() -> bool {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BarItem {
+    /// The name in the tooltip.
     pub label: &'static str,
+    /// The key that does the same, `""` when there is none.
     pub key: &'static str,
-    /// One of `link::ACTIONS`.
+    /// One of `link::ACTIONS`, or a row's own: `more` (open the zoom row), `close` (leave the row),
+    /// `case`, `word`, `regex`, `prev`, `next` (find row).
     pub action: &'static str,
+    /// What the item shows on its row: a symbol or a short word.
+    pub glyph: &'static str,
 }
 
-/// The top bar's commands, left to right.
+/// The top bar's commands, left to right. Zoom sits behind `…` (`more_items`).
 pub fn bar_items() -> Vec<BarItem> {
     vec![
-        BarItem { label: "Reload", key: "r", action: "reload" },
-        BarItem { label: "Source", key: "t", action: "toggle" },
-        BarItem { label: "Find", key: "/", action: "find" },
-        BarItem { label: "Zoom out", key: "-", action: "zoom-out" },
-        BarItem { label: "Zoom in", key: "+", action: "zoom-in" },
-        BarItem { label: "Screenshot", key: "s", action: "screenshot" },
-        BarItem { label: "Open in browser", key: "o", action: "browser" },
+        BarItem { label: "Reload", key: "r", action: "reload", glyph: "\u{27f3}" },
+        BarItem { label: "Source", key: "t", action: "toggle", glyph: "Source" },
+        BarItem { label: "Find", key: "/", action: "find", glyph: "\u{2315}" },
+        BarItem { label: "Screenshot", key: "s", action: "screenshot", glyph: "Shot" },
+        BarItem { label: "Open in browser", key: "o", action: "browser", glyph: "\u{2197}" },
+        BarItem { label: "More: zoom", key: "", action: "more", glyph: "\u{2026}" },
+    ]
+}
+
+/// The row `…` opens in place of the bar: zoom out, zoom in (the percentage between them), reset, close.
+pub fn more_items() -> Vec<BarItem> {
+    vec![
+        BarItem { label: "Zoom out", key: "-", action: "zoom-out", glyph: "\u{2212}" },
+        BarItem { label: "Zoom in", key: "+", action: "zoom-in", glyph: "+" },
+        BarItem { label: "Reset zoom", key: "0", action: "zoom-reset", glyph: "Reset" },
+        BarItem { label: "Close", key: "Esc", action: "close", glyph: "\u{2715}" },
+    ]
+}
+
+/// The find row's buttons, after the query field: the options, then previous, next and close.
+pub fn find_items() -> Vec<BarItem> {
+    vec![
+        BarItem { label: "Match case", key: "Alt-c", action: "case", glyph: "Aa" },
+        BarItem { label: "Whole word", key: "Alt-w", action: "word", glyph: "ab" },
+        BarItem { label: "Regular expression", key: "Alt-r", action: "regex", glyph: ".*" },
+        BarItem { label: "Previous match", key: "Shift-Enter", action: "prev", glyph: "\u{2191}" },
+        BarItem { label: "Next match", key: "Enter", action: "next", glyph: "\u{2193}" },
+        BarItem { label: "Close", key: "Esc", action: "close", glyph: "\u{2715}" },
     ]
 }
 
 /// "Reload (r)": an item's name and key, shown while the pointer is over it.
 pub fn tooltip(item: &BarItem) -> String {
-    format!("{} ({})", item.label, item.key)
+    if item.key.is_empty() {
+        item.label.to_string()
+    } else {
+        format!("{} ({})", item.label, item.key)
+    }
 }
 
-/// What an item shows on the bar: its word when there is room, its key when the pane is narrow.
+/// What an item shows on the bar: its glyph when there is room, its key when the pane is narrow.
 fn bar_word(item: &BarItem, narrow: bool) -> &'static str {
-    if narrow {
-        return item.key;
-    }
-    match item.action {
-        "reload" => "Reload",
-        "toggle" => "Source",
-        "find" => "Find",
-        "zoom-out" => "-",
-        "zoom-in" => "+",
-        "screenshot" => "Shot",
-        "browser" => "Browser",
-        _ => item.key,
+    if narrow && !item.key.is_empty() {
+        item.key
+    } else {
+        item.glyph
     }
 }
 
@@ -221,7 +246,7 @@ pub fn display_width(s: &str) -> usize {
         .sum()
 }
 
-/// `s` cut to at most `width` columns, with an ellipsis when cut.
+/// `s` cut to at most `width` columns, with a mark when cut.
 fn fit(s: &str, width: usize) -> String {
     if display_width(s) <= width {
         return s.to_string();
@@ -239,22 +264,45 @@ fn fit(s: &str, width: usize) -> String {
     out
 }
 
-/// Row-1 text (with its escape sequences) and the 1-based column range `(start, end)` of each bar item, for
-/// hit-testing. The title (or, while hovering, the hovered item's tooltip) sits left; the items sit right, with the
-/// zoom percentage between zoom out and zoom in.
-pub fn render_bar(title: &str, zoom: u32, cols: u16, hover: Option<usize>) -> (String, Vec<(u16, u16)>) {
-    let items = bar_items();
+/// The end of `s` in at most `width` columns, with `…` in front when cut: what a text field shows of a long entry.
+fn fit_tail(s: &str, width: usize) -> String {
+    if display_width(s) <= width {
+        return s.to_string();
+    }
+    let mut tail: Vec<char> = Vec::new();
+    for c in s.chars().rev() {
+        if display_width(&tail.iter().collect::<String>()) + display_width(&c.to_string()) + 1 > width {
+            break;
+        }
+        tail.push(c);
+    }
+    let kept: String = tail.into_iter().rev().collect();
+    if width > 0 {
+        format!("\u{2026}{kept}")
+    } else {
+        kept
+    }
+}
+
+/// `items` laid out right-aligned on a `cols`-wide row after `left` (the title, or the hovered item's tooltip),
+/// with `extra` text right before item `extra_before`: the row text and each item's 1-based column range.
+fn render_row(
+    items: &[BarItem],
+    left: &str,
+    cols: u16,
+    hover: Option<usize>,
+    extra: Option<(usize, &str)>,
+) -> (String, Vec<(u16, u16)>) {
     let cols = cols as usize;
-    let pct = format!("{zoom}%");
-    let width = |narrow: bool| items.iter().map(|i| bar_word(i, narrow).len() + 2).sum::<usize>() + pct.len() + 1;
+    let extra_w = extra.map_or(0, |(_, e)| display_width(e) + 1);
+    let width = |narrow: bool| items.iter().map(|i| display_width(bar_word(i, narrow)) + 2).sum::<usize>() + extra_w;
     let narrow = width(false) + 12 > cols;
     let right = width(narrow);
-    let left_room = cols.saturating_sub(right + 1);
     let left = match hover.and_then(|h| items.get(h)) {
         Some(item) => tooltip(item),
-        None => title.to_string(),
+        None => left.to_string(),
     };
-    let left = fit(&left, left_room);
+    let left = fit(&left, cols.saturating_sub(right + 2));
     let mut text = format!("\x1b[1;1H\x1b[2K {left}");
     let mut col = 2 + display_width(&left);
     let start = cols.saturating_sub(right) + 1;
@@ -262,44 +310,103 @@ pub fn render_bar(title: &str, zoom: u32, cols: u16, hover: Option<usize>) -> (S
     col = start.max(col);
     let mut ranges = Vec::new();
     for (n, item) in items.iter().enumerate() {
-        if item.action == "zoom-in" {
-            text.push_str(&format!("{pct} "));
-            col += pct.len() + 1;
+        if let Some((before, e)) = extra {
+            if before == n {
+                text.push_str(&format!("{e} "));
+                col += display_width(e) + 1;
+            }
         }
         let word = format!(" {} ", bar_word(item, narrow));
-        ranges.push((col as u16, (col + word.len() - 1) as u16));
+        let w = display_width(&word);
+        ranges.push((col as u16, (col + w - 1) as u16));
         if hover == Some(n) {
             text.push_str(&format!("\x1b[7m{word}\x1b[27m"));
         } else {
             text.push_str(&word);
         }
-        col += word.len();
+        col += w;
     }
     (text, ranges)
 }
 
-/// Row-1 text while finding: the query, the match case / whole word / regex toggles (inverted when on) and the
-/// position (`3/22`, `no matches`, `bad regex`).
-pub fn render_find(q: &FindQuery, count: i64, index: i64, cols: u16) -> String {
-    let status = match count {
-        c if c < 0 => "bad regex".to_string(),
-        0 if q.text.is_empty() => String::new(),
-        0 => "no matches".to_string(),
-        c => format!("{}/{c}", index.rem_euclid(c) + 1),
-    };
-    let toggle = |on: bool, label: &str| if on { format!("\x1b[7m {label} \x1b[27m") } else { format!(" {label} ") };
-    // The status takes a fixed 10 columns so the toggles stay where find_toggles says.
-    let right = format!("{}{}{} {status:<10}", toggle(q.case, "Aa"), toggle(q.word, "ab"), toggle(q.regex, ".*"));
-    let right_w = 12 + 1 + 10;
-    let room = (cols as usize).saturating_sub(right_w + 9);
-    let text = fit(&q.text, room);
-    let pad = (cols as usize).saturating_sub(7 + display_width(&text) + right_w);
-    format!("\x1b[1;1H\x1b[2K Find: {text}{}{right}", " ".repeat(pad))
+/// Row-1 text (with its escape sequences) and the 1-based column range `(start, end)` of each bar item, for
+/// hit-testing. The title (or, while hovering, the hovered item's tooltip) sits left; the items sit right.
+pub fn render_bar(title: &str, cols: u16, hover: Option<usize>) -> (String, Vec<(u16, u16)>) {
+    render_row(&bar_items(), title, cols, hover, None)
 }
 
-/// Column ranges of the three find toggles (match case, whole word, regex) on the find row of a `cols`-wide pane.
-pub fn find_toggles(cols: u16) -> Vec<(u16, u16)> {
-    // render_find ends the row with 12 columns of toggles, a space and a 10-column status.
-    let start = cols.saturating_sub(23) + 1;
-    vec![(start, start + 3), (start + 4, start + 7), (start + 8, start + 11)]
+/// The zoom row `…` opens: `more_items`, with the zoom percentage between zoom out and zoom in.
+pub fn render_more(title: &str, zoom: u32, cols: u16, hover: Option<usize>) -> (String, Vec<(u16, u16)>) {
+    let pct = format!("{zoom}%");
+    render_row(&more_items(), title, cols, hover, Some((1, &pct)))
+}
+
+/// The find row: its text, the column range of each `find_items` button, and where the caret goes (`None` while
+/// a tooltip fills the field).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FindRow {
+    pub text: String,
+    pub buttons: Vec<(u16, u16)>,
+    pub caret: Option<u16>,
+}
+
+/// The find row: `⌕`, the query field (underlined; `Find` in dim when empty; the hovered button's tooltip in its
+/// place while hovering), the options (inverted when on), the position (`3/22`, `No results`, `Bad regex`), and
+/// previous, next and close.
+pub fn render_find(q: &FindQuery, count: i64, index: i64, cols: u16, hover: Option<usize>) -> FindRow {
+    let items = find_items();
+    let status = match count {
+        c if c < 0 => "Bad regex".to_string(),
+        0 if q.text.is_empty() => String::new(),
+        0 => "No results".to_string(),
+        c => format!("{}/{c}", index.rem_euclid(c) + 1),
+    };
+    let on = |action: &str| match action {
+        "case" => q.case,
+        "word" => q.word,
+        "regex" => q.regex,
+        _ => false,
+    };
+    // " ⌕ " + field + " " + options (3 x 4) + " " + status (10) + " " + buttons (3 x 3)
+    let cols_n = cols as usize;
+    let right_w = 12 + 1 + 10 + 1 + 9;
+    let field_w = cols_n.saturating_sub(3 + 1 + right_w).max(1);
+    let (field, caret) = match hover.and_then(|h| items.get(h)) {
+        Some(item) => (format!("\x1b[2m{}\x1b[22m", pad(&fit(&tooltip(item), field_w), field_w)), None),
+        None if q.text.is_empty() => (format!("\x1b[2m{}\x1b[22m", pad(&fit("Find", field_w), field_w)), Some(4)),
+        None => {
+            let shown = fit_tail(&q.text, field_w.saturating_sub(1));
+            let caret = 4 + display_width(&shown) as u16;
+            (pad(&shown, field_w), Some(caret))
+        }
+    };
+    let mut text = format!("\x1b[1;1H\x1b[2K \u{2315} \x1b[4m{field}\x1b[24m ");
+    let mut col = 3 + field_w + 2;
+    let mut buttons = Vec::new();
+    for (n, item) in items.iter().enumerate() {
+        if n == 3 {
+            text.push_str(&format!(" {status:<10} "));
+            col += 12;
+        }
+        let word = format!(" {} ", item.glyph);
+        let w = display_width(&word);
+        buttons.push((col as u16, (col + w - 1) as u16));
+        let lit = on(item.action) || hover == Some(n);
+        text.push_str(&if lit { format!("\x1b[7m{word}\x1b[27m") } else { word });
+        col += w;
+    }
+    FindRow { text, buttons, caret }
+}
+
+/// `s` padded with spaces to `width` columns.
+fn pad(s: &str, width: usize) -> String {
+    format!("{s}{}", " ".repeat(width.saturating_sub(display_width(s))))
+}
+
+/// The terminal cursor for row 1: a blinking bar at `caret` (the find field), or hidden.
+pub fn caret(caret: Option<u16>) -> String {
+    match caret {
+        Some(col) => format!("\x1b[1;{col}H\x1b[5 q\x1b[?25h"),
+        None => "\x1b[?25l".to_string(),
+    }
 }

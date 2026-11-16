@@ -156,15 +156,26 @@ The clicked string is judged after stripping `file://`, a trailing `:line[:col]`
 
 ## Top bar
 
-One text row: file name · Reload · Source · Find · − 100 % + · Screenshot · Browser. Hovering an item shows a tooltip
-with its name and key (`Reload (r)`). Clicking runs it. While finding, the row becomes the find field with toggles
-for match case, whole word and regex, and the position (`3/22`); `Esc` closes it.
+One text row: file name · `⟳` reload · `Source` · `⌕` find · `Shot` · `↗` open in browser · `…` (changed
+2026-11-17 at the user's request: symbols for reload, find and open external; zoom moved behind `…`). `…` turns the
+row into the zoom row: `−` · percentage · `+` · `Reset` · `✕`; `Esc` or `✕` returns to the bar, and zooming leaves it
+open for the next click. Hovering an item shows a tooltip with its name and key (`Reload (r)`). Clicking runs it. A
+narrow pane shows keys instead of symbols. A dropdown under `…` was not built: text over the page picture needs the
+picture below the cell layer, which herdr's rendering of Kitty placements was not checked for.
+
+While finding, the row becomes the find row, laid out after editors' find widgets (VS Code, Chrome): `⌕`, an
+underlined field with the terminal cursor (a blinking bar) after the query and a dim `Find` while empty, `Aa` `ab`
+`.*`, the position (`3/22`, `No results`, `Bad regex`), `↑` `↓` `✕`. Hovering a button shows its tooltip in the
+field. While the row is open, keys go to the field as in an editor's focused find box: `Enter` and Down step to the
+next match, `Shift-Enter` (`CSI 13;2u` or `CSI 27;2;13~`) and Up to the previous one, Backspace edits, `Esc` closes;
+PgUp, PgDn, Home, End and the wheel scroll the page. Placing tiles moves the cursor, so every draw puts it back.
 
 ## Find
 
 App-injected script, so it works with page scripts off. Matches are marked with the CSS Custom Highlight API (the
 DOM is untouched): all matches lightly, the current one strongly. Options: match case, whole word, regular
-expression (JavaScript syntax). Measured 11-23 ms for a search, about 2 ms to step.
+expression (JavaScript syntax). Whole word and regular expression exclude each other, as in IntelliJ's and Xcode's
+find (a pattern sets its own word bounds); match case goes with either (`FindQuery::toggle`). Measured 11-23 ms for a search, about 2 ms to step.
 
 ## Zoom
 

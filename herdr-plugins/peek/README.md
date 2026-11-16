@@ -39,14 +39,16 @@ A path printed as plain text is not clickable, because herdr does not look for p
 
 ## Keys and the top bar
 
-The top row of the viewer is a bar: the document's name, then Reload, Source, Find, − zoom +, Shot and Browser. Hovering an item shows its name and key; clicking runs it. In a narrow pane the bar shows the keys only.
+The top row of the viewer is a bar: the document's name, then `⟳` (reload), `Source`, `⌕` (find), `Shot`, `↗` (open in the browser) and `…`, which turns the row into the zoom row (`−` 100% `+` `Reset` `✕`). Hovering an item shows its name and key; clicking runs it. In a narrow pane the bar shows the keys instead of the symbols.
+
+`/` or `⌕` opens the find row in place of the bar: a field with the caret in it, `Aa` (match case), `ab` (whole word), `.*` (regular expression), the position (`3/12`), `↑` `↓` and `✕`. While it is open, typing goes into the field, as in an editor: `Enter` or `↓` goes to the next match, `Shift-Enter` or `↑` to the previous one, `Esc` or `✕` closes it, PgUp/PgDn and the wheel still scroll. `Alt-c`, `Alt-w` and `Alt-r` switch the options; whole word and regular expression exclude each other (turning one on turns the other off), match case goes with either.
 
 | Key | Does |
 |---|---|
 | `j` `k` ↑ ↓, the wheel | scroll a few lines |
 | `space` `b` PgDn PgUp | scroll a screen |
 | `g` `G` | top, bottom |
-| `/` | find: type, `Enter` or `n` next, `N` previous, `Esc` closes; `Alt-c` match case, `Alt-w` whole word, `Alt-r` regular expression (or click `Aa` `ab` `.*`) |
+| `/` | find (above) |
 | `r` | reload (fetches a link again) |
 | `t` | rendered ↔ source |
 | `+` `-` `0` | zoom in, out, reset (50-200 %, remembered) |

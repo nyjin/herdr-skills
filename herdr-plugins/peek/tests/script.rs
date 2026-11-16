@@ -116,3 +116,19 @@ fn anchor_and_images_pending_reply_json() {
     assert!(anchor().contains("elementFromPoint"));
     assert!(images_pending().contains("document.images") && images_pending().contains(".complete"));
 }
+
+#[test]
+fn whole_word_and_regex_exclude_each_other_but_case_goes_with_both() {
+    let mut q = FindQuery::default();
+    q.toggle("word");
+    q.toggle("regex");
+    assert!(q.regex && !q.word);
+    q.toggle("word");
+    assert!(q.word && !q.regex);
+    q.toggle("case");
+    assert!(q.case && q.word);
+    q.toggle("regex");
+    assert!(q.case && q.regex && !q.word);
+    q.toggle("regex");
+    assert!(!q.regex && !q.word && q.case);
+}

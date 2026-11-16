@@ -3,10 +3,11 @@ use std::process::Command;
 
 #[test]
 fn every_action_has_a_bar_item_or_key() {
-    let bar: Vec<&str> = peek::term::bar_items().iter().map(|b| b.action).collect();
+    let rows = peek::term::bar_items().into_iter().chain(peek::term::more_items());
+    let clickable: Vec<&str> = rows.map(|b| b.action).collect();
     for action in peek::link::ACTIONS {
-        // zoom-reset (`0`) and back (`h`, Backspace) are keys only
-        assert!(bar.contains(&action) || ["zoom-reset", "back"].contains(&action), "{action} unreachable");
+        // back (`h`, Backspace) is a key only
+        assert!(clickable.contains(&action) || action == "back", "{action} unreachable");
     }
 }
 

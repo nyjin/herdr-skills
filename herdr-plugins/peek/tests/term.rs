@@ -76,50 +76,114 @@ fn geometry_without_pixels_falls_back() {
 }
 
 #[test]
+fn parses_shift_enter() {
+    let (inputs, _) = parse(b"\x1b[13;2u\x1b[27;2;13~");
+    assert_eq!(inputs, vec![Input::Key(Key::ShiftEnter), Input::Key(Key::ShiftEnter)]);
+}
+
+#[test]
 fn bar_layout_and_hover() {
-    let (text, ranges) = render_bar("plan.md", 110, 120, None);
+    let (text, ranges) = render_bar("plan.md", 120, None);
     assert_eq!(ranges.len(), bar_items().len());
     for w in ranges.windows(2) {
         assert!(w[0].1 < w[1].0, "{ranges:?}");
     }
     assert!(ranges.last().unwrap().1 <= 120);
-    assert!(text.contains("plan.md") && text.contains("110%"));
+    for glyph in ["plan.md", "\u{27f3}", "\u{2315}", "\u{2197}", "\u{2026}", "Source", "Shot"] {
+        assert!(text.contains(glyph), "{glyph} missing from {text:?}");
+    }
+    // zoom moved behind `…`
+    assert!(!text.contains('%'));
     // hovering an item shows its tooltip (name and key) and marks the item
-    let (hover, _) = render_bar("plan.md", 100, 120, Some(0));
+    let (hover, _) = render_bar("plan.md", 120, Some(0));
     assert!(hover.contains("Reload (r)") && hover.contains("\x1b[7m"));
 }
 
 #[test]
+fn a_symbol_takes_one_column() {
+    let (_, ranges) = render_bar("plan.md", 120, None);
+    // " ⟳ " is three columns although "⟳" is three bytes
+    assert_eq!(ranges[0].1 - ranges[0].0 + 1, 3);
+}
+
+#[test]
 fn bar_fits_a_narrow_pane() {
-    let (_, ranges) = render_bar("a-very-long-document-name-that-does-not-fit.md", 100, 40, None);
-    assert!(ranges.last().unwrap().1 <= 40, "{ranges:?}");
+    let (_, ranges) = render_bar("a-very-long-document-name-that-does-not-fit.md", 30, None);
+    assert!(ranges.last().unwrap().1 <= 30, "{ranges:?}");
 }
 
 #[test]
 fn tooltips_name_the_key() {
-    let tips: Vec<String> = bar_items().iter().map(tooltip).collect();
-    assert!(tips.contains(&"Open in browser (o)".to_string()));
-    assert!(tips.contains(&"Zoom in (+)".to_string()));
+    let tips: Vec<String> = bar_items().iter().chain(&more_items()).chain(&find_items()).map(tooltip).collect();
+    for tip in ["Open in browser (o)", "More: zoom", "Zoom in (+)", "Zoom out (-)", "Next match (Enter)", "Close (Esc)"] {
+        assert!(tips.contains(&tip.to_string()), "{tip} missing from {tips:?}");
+    }
 }
 
 #[test]
-fn render_find_shows_toggles_and_position() {
+fn more_row_puts_the_zoom_between_its_buttons() {
+    let (text, ranges) = render_more("plan.md", 110, 120, None);
+    assert_eq!(ranges.len(), more_items().len());
+    let at = |col: u16| {
+        // column of "110%" on the row, counted the way the row is laid out
+        let plain: String = text.replace("\x1b[1;1H\x1b[2K", "");
+        plain.chars().skip(col as usize - 1).take(4).collect::<String>()
+    };
+    assert_eq!(at(ranges[0].1 + 1), "110%");
+    assert!(ranges[0].1 + 5 < ranges[1].0 + 1, "{ranges:?}");
+    assert!(ranges.last().unwrap().1 <= 120);
+}
+
+#[test]
+fn find_row_shows_the_query_options_position_and_caret() {
     use peek::script::FindQuery;
     let q = FindQuery { text: "agent".into(), case: true, word: false, regex: true };
-    let row = render_find(&q, 22, 2, 100);
-    assert!(row.contains("agent") && row.contains("3/22"));
+    let row = render_find(&q, 22, 2, 100, None);
+    assert!(row.text.contains("agent") && row.text.contains("3/22"));
     // an option that is on is drawn inverted; one that is off is not
-    assert!(row.contains("\x1b[7m Aa \x1b[27m") && row.contains("\x1b[7m .* \x1b[27m") && !row.contains("\x1b[7m ab \x1b[27m"));
-    assert!(render_find(&q, 0, 0, 100).contains("no matches"));
-    assert!(render_find(&q, -1, 0, 100).contains("bad regex"));
+    assert!(row.text.contains("\x1b[7m Aa \x1b[27m") && row.text.contains("\x1b[7m .* \x1b[27m"));
+    assert!(!row.text.contains("\x1b[7m ab \x1b[27m"));
+    for glyph in ["\u{2315}", "\u{2191}", "\u{2193}", "\u{2715}"] {
+        assert!(row.text.contains(glyph), "{glyph}");
+    }
+    assert_eq!(row.buttons.len(), find_items().len());
+    for w in row.buttons.windows(2) {
+        assert!(w[0].1 < w[1].0, "{:?}", row.buttons);
+    }
+    assert_eq!(row.buttons.last().unwrap().1, 100);
+    // the caret stands right after the query: " ⌕ " is three columns, so "agent" ends at column 8
+    assert_eq!(row.caret, Some(9));
+    assert!(render_find(&q, 0, 0, 100, None).text.contains("No results"));
+    assert!(render_find(&q, -1, 0, 100, None).text.contains("Bad regex"));
 }
 
 #[test]
-fn find_toggle_columns_match_the_row() {
-    let q = peek::script::FindQuery { text: "x".into(), ..Default::default() };
-    let row = render_find(&q, 1, 0, 80);
-    let cols = find_toggles(80);
-    assert_eq!(cols.len(), 3);
-    assert!(cols.iter().all(|(a, b)| a <= b && *b <= 80));
-    assert!(row.contains(" Aa "));
+fn an_empty_find_field_says_find_and_takes_the_caret() {
+    let row = render_find(&peek::script::FindQuery::default(), 0, 0, 80, None);
+    assert!(row.text.contains("\x1b[2mFind"));
+    assert_eq!(row.caret, Some(4));
+}
+
+#[test]
+fn hovering_a_find_button_shows_its_tooltip_in_the_field() {
+    let q = peek::script::FindQuery { text: "agent".into(), ..Default::default() };
+    let next = find_items().iter().position(|i| i.action == "next").unwrap();
+    let row = render_find(&q, 3, 0, 100, Some(next));
+    assert!(row.text.contains("Next match (Enter)"));
+    assert_eq!(row.caret, None);
+}
+
+#[test]
+fn a_long_query_shows_its_end() {
+    let q = peek::script::FindQuery { text: format!("{}tail", "x".repeat(200)), ..Default::default() };
+    let row = render_find(&q, 1, 0, 80, None);
+    assert!(row.text.contains("\u{2026}") && row.text.contains("tail"));
+    let caret = row.caret.unwrap();
+    assert!(caret < row.buttons[0].0, "caret {caret} past the field: {:?}", row.buttons);
+}
+
+#[test]
+fn caret_shows_or_hides_the_cursor() {
+    assert_eq!(caret(Some(9)), "\x1b[1;9H\x1b[5 q\x1b[?25h");
+    assert_eq!(caret(None), "\x1b[?25l");
 }
