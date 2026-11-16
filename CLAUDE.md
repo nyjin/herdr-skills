@@ -5,7 +5,7 @@ Agent Skills and herdr plugins for herdr. Each unit installs on its own; there i
 ## Layout
 
 - `skills/<name>/`: one Agent Skill (`SKILL.md`, `references/`, `assets/`, `scripts/`, `tests/`). Installed individually with `install.sh`, `gh skill` or `npx skills`; its hooks are registered by its own script (`herdr-parallel-worktree`: `scripts/hooks/manage.py`). The maintainer's install is a symlink into this checkout, so `skills/herdr-parallel-worktree/` must not move.
-- `herdr-plugins/<name>/`: one herdr plugin (`herdr-plugin.toml`, scripts, `README.md` / `README.ko.md`, `tests/`). Not `plugins/`: `gh skill` reads that name as Claude Code-style plugins.
+- `herdr-plugins/<name>/`: one herdr plugin (`herdr-plugin.toml`, scripts, `README.md` / `README.ko.md`, `tests/`). Not `plugins/`: `gh skill` reads that name as Claude Code-style plugins. None live here now: peek moved to its own repository, nyjin/herdr-peek, on 2026-11-17.
 - `docs/superpowers/specs/`, `docs/superpowers/plans/`: design documents and plans. Dated records: when behaviour changes later, update the current design doc, not old plans.
 - `scripts/check.sh`: every check, the same locally and in CI. Run `scripts/check.sh` before committing.
 
