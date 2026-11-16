@@ -194,9 +194,9 @@ const fn item(label: &'static str, key: &'static str, action: &'static str, glyp
 /// rendered, `View` while the source shows. Zoom and screenshot sit behind `…` (`more_items`).
 pub fn bar_items(showing_source: bool) -> Vec<BarItem> {
     let toggle = if showing_source {
-        item("Show rendered", "t", "toggle", "\u{25c9}", "View")
+        item("Show rendered", "v", "toggle", "\u{25c9}", "View")
     } else {
-        item("Show source", "t", "toggle", "</>", "Source")
+        item("Show source", "v", "toggle", "</>", "Source")
     };
     vec![
         item("Reload", "r", "reload", "\u{27f3}", "Reload"),
@@ -239,13 +239,19 @@ pub fn tooltip(item: &BarItem) -> String {
     }
 }
 
+/// Symbols that common terminal fonts draw wider than their cell, so one space leaves them touching the word.
+const WIDE_DRAWN: [&str; 2] = ["\u{27f3}", "\u{2315}"];
+
 /// What an item shows, padded by a space on each side: symbol and word, or the symbol alone in a narrow pane.
 fn cell(item: &BarItem, narrow: bool) -> String {
     match (item.glyph, item.text) {
         ("", text) => format!(" {text} "),
         (glyph, "") => format!(" {glyph} "),
         (glyph, _) if narrow => format!(" {glyph} "),
-        (glyph, text) => format!(" {glyph} {text} "),
+        (glyph, text) => {
+            let gap = if WIDE_DRAWN.contains(&glyph) { "  " } else { " " };
+            format!(" {glyph}{gap}{text} ")
+        }
     }
 }
 
@@ -370,12 +376,13 @@ pub fn render_more(title: &str, zoom: u32, cols: u16, hover: Option<usize>) -> (
     render_row(&more_items(), title, cols, hover, Some((1, &pct)))
 }
 
-/// Row 1 while a toast shows: `text` in an inverted pill in the middle, like herdr's own "copied to clipboard".
-pub fn render_toast(text: &str, cols: u16) -> String {
+/// A toast on row `row` (the pane's last): `text` in an inverted pill in the middle, like herdr's own "copied to
+/// clipboard".
+pub fn render_toast(text: &str, row: u16, cols: u16) -> String {
     let cols = cols as usize;
     let pill = format!(" {} ", fit(text, cols.saturating_sub(2)));
     let lead = cols.saturating_sub(display_width(&pill)) / 2;
-    format!("\x1b[1;1H\x1b[2K{}\x1b[7m{pill}\x1b[27m", " ".repeat(lead))
+    format!("\x1b[{row};1H\x1b[2K{}\x1b[7m{pill}\x1b[27m", " ".repeat(lead))
 }
 
 /// `path` in at most `width` columns: whole when it fits, else its start, `…` and the file name

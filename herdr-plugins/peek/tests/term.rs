@@ -87,7 +87,8 @@ fn bar_order_icons_and_words() {
     assert_eq!(actions, ["reload", "find", "toggle", "browser", "more"]);
     let (text, ranges) = render_bar("plan.md", false, 120, None);
     assert_eq!(ranges.len(), 5);
-    for cell in ["\u{27f3} Reload", "\u{2315} Find", "</> Source", "\u{2197} Browser", "\u{2026} More"] {
+    // ⟳ and ⌕ draw wider than their cell in common fonts: two spaces keep them off the word
+    for cell in ["\u{27f3}  Reload", "\u{2315}  Find", "</> Source", "\u{2197} Browser", "\u{2026} More"] {
         assert!(text.contains(cell), "{cell} missing from {text:?}");
     }
     assert!(text.contains("plan.md") && !text.contains('%'));
@@ -104,7 +105,7 @@ fn the_source_button_turns_into_view() {
     assert!(rendered.contains("</> Source") && !rendered.contains("View"));
     assert!(source.contains("\u{25c9} View") && !source.contains("Source"));
     let tip = |showing_source: bool| tooltip(&bar_items(showing_source)[2]);
-    assert_eq!((tip(false).as_str(), tip(true).as_str()), ("Show source (t)", "Show rendered (t)"));
+    assert_eq!((tip(false).as_str(), tip(true).as_str()), ("Show source (v)", "Show rendered (v)"));
 }
 
 #[test]
@@ -118,8 +119,8 @@ fn items_stand_an_even_distance_apart() {
 #[test]
 fn a_symbol_takes_one_column() {
     let (_, ranges) = render_bar("plan.md", false, 120, None);
-    // " ⟳ Reload " is ten columns although "⟳" is three bytes
-    assert_eq!(ranges[0].1 - ranges[0].0 + 1, 10);
+    // " ⟳  Reload " is eleven columns although "⟳" is three bytes
+    assert_eq!(ranges[0].1 - ranges[0].0 + 1, 11);
 }
 
 #[test]
@@ -213,9 +214,10 @@ fn caret_shows_or_hides_the_cursor() {
 }
 
 #[test]
-fn a_toast_stands_centred_in_a_pill() {
-    let row = render_toast("Screenshot saved", 40);
-    let plain = row.replace("\x1b[1;1H\x1b[2K", "");
+fn a_toast_stands_centred_in_a_pill_on_the_last_row() {
+    let row = render_toast("Screenshot saved", 24, 40);
+    assert!(row.starts_with("\x1b[24;1H\x1b[2K"), "{row:?}");
+    let plain = row.replace("\x1b[24;1H\x1b[2K", "");
     let lead = plain.chars().take_while(|c| *c == ' ').count();
     // " Screenshot saved " is 18 columns: (40 - 18) / 2 = 11 spaces before it
     assert_eq!(lead, 11, "{row:?}");

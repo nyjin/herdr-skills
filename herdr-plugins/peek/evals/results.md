@@ -52,3 +52,23 @@ tokens (none registered), PDF (no PDF handling: it shows as text).
   size.
 - Test detail, not a fix: an action invoked through the API runs for the pane herdr has focused, not the pane named
   in the call's context, so the test focused the clicking pane first.
+
+# peek 0.6.0: select to open, bar and find (2026-11-16 and 17)
+
+Same separate herdr 0.9.5 session as above.
+
+| Area | Result |
+|---|---|
+| Watcher start | started by a herdr action (`peek action reload`); the action ended `succeeded` at once (stdio on `/dev/null`) |
+| One watcher per server | a second one for the same socket exits; the watcher exits two checks after the socket goes, and when the binary is replaced |
+| Copy of a path a shell pane shows | opened beside that pane, 55 and 61 ms from the change being seen to the state written |
+| Copy of a path no pane shows | nothing opened |
+| Selections by hand (the user's) | opened the file beside the Claude Code pane they were made in (`watch.log`); herdr kept focus where it was |
+| Korean particle after a path (double-click) | `docs/superpowers/specs/` plus the particle: a folder, nothing opened, as designed |
+| Bar | `⟳  Reload   ⌕  Find   </> Source   ↗ Browser   … More`; `v` switches `</> Source` and `◉ View` |
+| `… More` | hover tooltip, `+` to 110 %, `Reset` to 100 %, `Esc` back to the bar |
+| Find row | typing goes to the field; `Enter`, `Enter`, `Up`, `Shift-Enter` (`CSI 13;2u`) step 2/3, 3/3, 2/3, 1/3; letters such as `j` and `q` go into the query; whole word and regex exclude each other; `Esc` and `✕` close; `↓` hover shows "Next match (Enter)" |
+| Screenshot | toast on the last row with the path, the bar left alone; gone after 5 s |
+
+Not checked by a script: the caret's look (the test window sits behind the working one, so captures were stale) and
+Shift-Enter from a real keyboard (it depends on herdr passing it on; `↑` does the same).

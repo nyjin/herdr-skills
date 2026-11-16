@@ -69,7 +69,8 @@ struct Viewer {
     bar: Vec<(u16, u16)>,
     /// The zoom row (`…`) shows in place of the bar.
     menu: bool,
-    /// A toast on row 1 (text, id) until its time is up or row 1 is clicked.
+    /// A toast on the last row (text, id) until its time is up or it is clicked; the page gives up that row
+    /// meanwhile (the picture would cover text).
     toast: Option<(String, u64)>,
     /// Where the terminal cursor stands while the find field takes typing.
     caret: Option<u16>,
@@ -230,15 +231,13 @@ fn apply_geometry() {
     log(serde_json::json!({"ev": "measure", "cols": g.cols, "rows": g.rows, "cell": [g.cell_w, g.cell_h]}));
 }
 
-/// Row 1: the find row while finding, a toast while one shows, the zoom row while `…` is open, else the bar; the
-/// cursor stands in the find field or is hidden.
+/// Row 1: the find row while finding, the zoom row while `…` is open, else the bar; the cursor stands in the find
+/// field or is hidden.
 fn draw_bar() {
     let (text, caret) = with(|v| {
         let (text, ranges, caret) = if let Some(f) = &v.find {
             let row = term::render_find(&f.q, f.count, f.index, v.g.cols, v.hover);
             (row.text, row.buttons, row.caret)
-        } else if let Some((text, _)) = &v.toast {
-            (term::render_toast(text, v.g.cols), Vec::new(), None)
         } else if v.menu {
             let (text, ranges) = term::render_more(&v.title, v.zoom, v.g.cols, v.hover);
             (text, ranges, None)
@@ -257,8 +256,10 @@ fn doc_rows(v: &Viewer) -> u64 {
     (v.doc_h * v.dpr / v.g.cell_h as f64).ceil() as u64
 }
 
+/// Rows the page shows: all but the bar, and but the last while a toast stands there.
 fn view_rows(v: &Viewer) -> u32 {
-    v.g.rows.saturating_sub(FIRST_ROW - 1).max(1) as u32
+    let toast = v.toast.is_some() as u16;
+    v.g.rows.saturating_sub(FIRST_ROW - 1 + toast).max(1) as u32
 }
 
 fn page_options(v: &Viewer, line: Option<u32>) -> PageOptions {
@@ -474,6 +475,9 @@ fn draw(t_key: f64) {
             s.push_str(&kitty::place(p, w, v.g.cell_h));
         }
         v.placed = new;
+        if let Some((text, _)) = &v.toast {
+            s.push_str(&term::render_toast(text, v.g.rows, v.g.cols));
+        }
         // placing tiles moves the cursor: put it back in the find field (or keep it hidden)
         s.push_str(&term::caret(v.caret));
         (v.view_top, v.ready.len())
@@ -777,20 +781,30 @@ fn screenshot() {
 /// How long a toast stays on row 1.
 const TOAST_MS: u64 = 5000;
 
-/// Show `text` on row 1 for `TOAST_MS`; a click on row 1 takes it away sooner.
+/// Show `text` on the last row for `TOAST_MS` (the page draws one row shorter meanwhile); a click on it takes it
+/// away sooner.
 fn toast(text: String) {
     let id = with(|v| {
         let id = v.toast.as_ref().map_or(0, |(_, id)| id + 1);
         v.toast = Some((text, id));
         id
     });
-    draw_bar();
+    draw(now_ms());
     after(TOAST_MS, move || {
         if with(|v| v.toast.as_ref().is_some_and(|(_, shown)| *shown == id)) {
-            with(|v| v.toast = None);
-            draw_bar();
+            end_toast();
         }
     });
+}
+
+/// Clear the toast's row and give it back to the page.
+fn end_toast() {
+    let rows = with(|v| {
+        v.toast = None;
+        v.g.rows
+    });
+    out(&format!("\x1b[{rows};1H\x1b[2K"));
+    draw(now_ms());
 }
 
 /// `YYYYMMDD-HHMMSS` in local time.
@@ -989,7 +1003,7 @@ fn on_key(k: Key, t: f64) {
         Key::Char('g') | Key::Home => scroll(i64::MIN / 2, t),
         Key::Char('G') | Key::End => scroll(i64::MAX / 2, t),
         Key::Char('r') => act("reload"),
-        Key::Char('t') => act("toggle"),
+        Key::Char('v') => act("toggle"),
         Key::Char('/') => act("find"),
         Key::Char('+') | Key::Char('=') => act("zoom-in"),
         Key::Char('-') => act("zoom-out"),
@@ -1021,10 +1035,7 @@ fn on_mouse(m: term::Mouse, t: f64) {
                 draw_bar();
             }
         }
-        MouseKind::Press if on_bar && with(|v| v.toast.is_some() && v.find.is_none()) => {
-            with(|v| v.toast = None);
-            draw_bar();
-        }
+        MouseKind::Press if with(|v| v.toast.is_some() && row == v.g.rows) => end_toast(),
         MouseKind::Press if on_bar => {
             if let Some(n) = item {
                 row_click(n);

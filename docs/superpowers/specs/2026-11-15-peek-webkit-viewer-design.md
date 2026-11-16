@@ -150,7 +150,7 @@ The clicked string is judged after stripping `file://`, a trailing `:line[:col]`
 - Wheel scrolls. A click on the page maps the pixel to page coordinates; `elementFromPoint(...).closest('a')` gives
   the link: a local file opens in the same viewer and pushes history; a web address goes to `open`.
 - Default keys: `j`/`k`/↑/↓ a few lines, `space`/`b`/PgDn/PgUp a screen, `g`/`G` top/bottom, `/` find, `n`/`N` next
-  and previous match, `r` reload, `t` rendered/source, `+`/`-`/`0` zoom in/out/reset, `s` screenshot, `o` open in
+  and previous match, `r` reload, `v` rendered/source (was `t` until 2026-11-17), `+`/`-`/`0` zoom in/out/reset, `s` screenshot, `o` open in
   browser, `h`/Backspace back, `q` close.
 - The same commands exist as herdr actions, so they work from the Claude pane too.
 
@@ -185,9 +185,10 @@ top. Measured re-layout 38-40 ms plus capture.
 
 ## Screenshot
 
-The current screen as PNG, also copied to the clipboard. A toast in the middle of row 1 (an inverted pill, like
-herdr's own "copied to clipboard") gives the path for 5 s, the middle of a long path cut so the file name stays; a
-click on row 1 takes it away sooner. No herdr notification (user request, 2026-11-17).
+The current screen as PNG, also copied to the clipboard. A toast in the middle of the pane's last row (an inverted
+pill, like herdr's own "copied to clipboard") gives the path for 5 s, the middle of a long path cut so the file name
+stays; a click on it takes it away sooner. Row 1 would hide the bar, and the page picture covers text, so the page
+draws one row shorter while the toast stands. No herdr notification (user requests, 2026-11-17).
 
 ```
 /tmp/peek-<uid>/                         0700, created and checked to be ours (not a link, owned by the user)
@@ -364,3 +365,18 @@ Differences from the design above:
   relay between herdr and the shell were rejected: the first changes the user's output, the second hides the pane's
   foreground process from herdr's agent detection and working-folder tracking. Paths open by selection instead:
   "Select to open" above.
+
+## What shipped (0.6.0, 2026-11-17)
+
+Select to open as designed above, plus the bar and find changes asked for while trying it (sections "Top bar",
+"Find" and "Screenshot" describe the result). Test record: `herdr-plugins/peek/evals/results.md`.
+
+Differences from the design:
+
+- `peek select <text>` runs one selection the way the watcher does, for the integration tests (through the fake
+  herdr) and by hand.
+- The watcher also exits when the peek binary is replaced (checked with the server, every 5 s), so a rebuild or a
+  plugin update does not leave an old watcher running; the next peek run starts the new one. `$PEEK_WATCH_CHECK_MS`
+  shortens the check for the lifetime test.
+- The rendered/source key is `v` (was `t`); the screenshot toast stands on the last row, which the page gives up
+  while it shows.

@@ -26,7 +26,7 @@ A path printed as plain text is not clickable, because herdr does not look for p
 
 | Opens | Shown as |
 |---|---|
-| a `.md` / `.markdown` path | rendered markdown (tables, task lists, footnotes, images); `t` switches to the source |
+| a `.md` / `.markdown` path | rendered markdown (tables, task lists, footnotes, images); `v` switches to the source |
 | a source path (`.py` `.java` `.kt` `.ts` `.rs` …); a trailing `:line` jumps to and marks that line | highlighted source with line numbers |
 | an image (`.png` `.jpg` `.gif` `.webp` `.svg`) or an `.html` file | the image, or the page with its own styles |
 | Jira `…atlassian.net/browse/KEY` | summary, status, assignee, description and comments |
@@ -50,9 +50,9 @@ The top row of the viewer is a bar: the document's name, then `⟳ Reload`, `⌕
 | `g` `G` | top, bottom |
 | `/` | find (above) |
 | `r` | reload (fetches a link again) |
-| `t` | rendered ↔ source |
+| `v` | rendered ↔ source |
 | `+` `-` `0` | zoom in, out, reset (50-200 %, remembered) |
-| `s` | screenshot of the screen, also copied to the clipboard; a toast at the top says where it was saved |
+| `s` | screenshot of the screen, also copied to the clipboard; a toast at the bottom says where it was saved |
 | `o` | open in the browser (a local document as a page with its images; a link at its address) |
 | a click on a link | a local file opens here, a web address in the browser, `#anchor` scrolls |
 | `h` Backspace | back |
