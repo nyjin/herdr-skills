@@ -294,8 +294,12 @@ the zoom in `~/.local/state/peek/`. The README says what it relies on and what i
 Open item: newer macOS versions may ask the user before an app reads the pasteboard without a paste. macOS 15.6 asked
 nothing in the hand check; later versions are not checked.
 
-To check before the plan's tasks: that herdr leaves a detached child of a `[[startup]]` hook or of an action running,
-and records the hook as finished (a spike with a sleeper in the separate session).
+Checked with a throwaway plugin in the separate session (2026-11-16): herdr leaves a child of an action running after
+the action ends (it is reparented to launchd), and records the action as succeeded, but only when the child does not
+hold the action's stdout and stderr: herdr reads both pipes to the end (`finish_plugin_child` in
+`src/app/api/plugins/runtime.rs`), so a child that keeps them leaves the action "running" until it exits. `peek watch
+--spawn` therefore starts the watcher with stdin, stdout and stderr on `/dev/null` in a process group of its own, and
+returns. Startup hooks run through the same code.
 
 TODO (not in 0.6.0, user decision 2026-11-16): a selected folder opens a folder page (folders first, then files, by
 name, with size and time; `..`; capped; entries open in peek; redrawn on change). Left out because everything else
