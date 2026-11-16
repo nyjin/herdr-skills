@@ -2,7 +2,7 @@
 
 **English** | [한국어](README.ko.md)
 
-Agent Skills and herdr plugins for [herdr](https://herdr.dev), the agent multiplexer that lives in your terminal. Run parallel coding agents in separate git worktrees and watch every Claude Code worker from the herdr sidebar, instead of invisible subagents; read what a Claude pane points at in the pane beside it. Each one installs on its own: skills with `gh skill` or `npx skills`, herdr plugins with `herdr plugin install`.
+Agent Skills and herdr plugins for [herdr](https://herdr.dev), the agent multiplexer that lives in your terminal. Run parallel coding agents in separate git worktrees and watch every Claude Code worker from the herdr sidebar, instead of invisible subagents. Each one installs on its own: skills with `gh skill` or `npx skills`, herdr plugins with `herdr plugin install`.
 
 ## Skills
 
@@ -81,15 +81,12 @@ ${HERDR_SKILLS_DATA_HOME:-~/.local/share/herdr-skills}/<skill>/
 
 Plugins for herdr itself, installed with `herdr plugin install`, not through Claude Code.
 
+None live here at the moment. [peek](https://github.com/nyjin/herdr-peek), which renders a file or link that a pane points at in the pane beside it, has moved to its own repository; its README explains how to install it.
+
 <!-- herdr-plugins:start -->
 | Plugin | Description |
 |---|---|
-| [`peek`](herdr-plugins/peek/README.md) | Select a path (markdown, source, image, HTML) in any pane, or Ctrl+click a Jira, Confluence or GitHub PR address or a hyperlink, to read it, rendered by macOS's WebKit, in a pane to its right. Find, zoom, screenshots, links, and a redraw when the file changes. Nothing to install besides the plugin; nothing opens without a selection or a click. |
 <!-- herdr-plugins:end -->
-
-```sh
-herdr plugin install nyjin/herdr-skills/herdr-plugins/peek
-```
 
 ## Repository layout
 

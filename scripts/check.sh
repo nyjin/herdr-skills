@@ -55,14 +55,15 @@ check_names() {
 
 # Each README's tables list exactly what the repository holds: the rows between <!-- skills:start --> and
 # <!-- skills:end --> are the skills/ directories, those between <!-- herdr-plugins:start --> and
-# <!-- herdr-plugins:end --> the herdr-plugins/ directories.
+# <!-- herdr-plugins:end --> the herdr-plugins/ directories (none when the folder does not exist).
 check_readme() {
   local fail=0 readme kind dirs table
   for kind in skills herdr-plugins; do
     if [ "$kind" = skills ]; then
       dirs=$(find skills -mindepth 2 -maxdepth 2 -name SKILL.md | cut -d/ -f2 | sort)
     else
-      dirs=$(find herdr-plugins -mindepth 2 -maxdepth 2 -name herdr-plugin.toml | cut -d/ -f2 | sort)
+      dirs=""
+      [ -d herdr-plugins ] && dirs=$(find herdr-plugins -mindepth 2 -maxdepth 2 -name herdr-plugin.toml | cut -d/ -f2 | sort)
     fi
     for readme in README.md README.ko.md; do
       table=$(awk -v s="<!-- ${kind}:start -->" -v e="<!-- ${kind}:end -->" '$0==s{f=1;next} $0==e{if(f)exit} f' "$readme" \
@@ -162,8 +163,8 @@ check_runs() {
 
 # Unit tests (tests/test_*.py) of every skill and herdr plugin, each run from its own directory. The live_*.py and
 # hook_cost.py scripts start claude and are run by hand.
-# Python units run unittest on their tests/*.py; Rust units (a Cargo.toml) run cargo test. On Linux only a Rust
-# unit's platform-neutral modules build; its macOS parts are behind cfg(target_os = "macos").
+# Python units run unittest on their tests/*.py; Rust units (a Cargo.toml) run cargo test. A glob that matches
+# nothing (no herdr-plugins/ folder) stays literal and fails both tests, so it is skipped.
 check_unit() {
   local unit fail=0
   for unit in skills/*/ herdr-plugins/*/; do

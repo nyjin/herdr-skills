@@ -2,7 +2,7 @@
 
 [English](README.md) | **한국어**
 
-터미널 안에서 돌아가는 에이전트 멀티플렉서 [herdr](https://herdr.dev)를 위한 Agent Skills와 herdr 플러그인 모음입니다. 여러 코딩 에이전트를 git worktree로 나눠 병렬로 돌리고, 보이지 않는 서브에이전트 대신 각 Claude Code 작업자가 일하는 모습을 herdr 사이드바에서 직접 봅니다. Claude pane이 가리키는 파일이나 링크는 바로 옆 pane에서 읽습니다. 하나씩 따로 설치합니다. 스킬은 `gh skill`이나 `npx skills`로, herdr 플러그인은 `herdr plugin install`로 설치합니다.
+터미널 안에서 돌아가는 에이전트 멀티플렉서 [herdr](https://herdr.dev)를 위한 Agent Skills와 herdr 플러그인 모음입니다. 여러 코딩 에이전트를 git worktree로 나눠 병렬로 돌리고, 보이지 않는 서브에이전트 대신 각 Claude Code 작업자가 일하는 모습을 herdr 사이드바에서 직접 봅니다. 하나씩 따로 설치합니다. 스킬은 `gh skill`이나 `npx skills`로, herdr 플러그인은 `herdr plugin install`로 설치합니다.
 
 ## 스킬
 
@@ -81,15 +81,12 @@ ${HERDR_SKILLS_DATA_HOME:-~/.local/share/herdr-skills}/<skill>/
 
 herdr 자체의 플러그인입니다. Claude Code가 아니라 `herdr plugin install`로 설치합니다.
 
+지금은 이 저장소에 있는 플러그인이 없습니다. pane이 가리키는 파일이나 링크를 렌더링해 바로 옆 pane에서 보여 주는 [peek](https://github.com/nyjin/herdr-peek)은 자체 저장소로 옮겨 갔습니다. 설치 방법은 그 저장소의 README에 있습니다.
+
 <!-- herdr-plugins:start -->
 | 플러그인 | 설명 |
 |---|---|
-| [`peek`](herdr-plugins/peek/README.ko.md) | 아무 pane에서나 경로(마크다운, 소스, 이미지, HTML)를 선택하거나, Jira·Confluence·GitHub PR 주소나 하이퍼링크를 Control + 클릭하면, macOS의 WebKit으로 렌더링해 오른쪽 pane에서 보여 줍니다. 찾기, 확대·축소, 스크린샷, 링크 이동을 지원하고, 파일이 바뀌면 다시 그립니다. 플러그인 말고는 설치할 것이 없고, 선택하거나 클릭하지 않으면 아무것도 열지 않습니다. |
 <!-- herdr-plugins:end -->
-
-```sh
-herdr plugin install nyjin/herdr-skills/herdr-plugins/peek
-```
 
 ## 저장소 구성
 
