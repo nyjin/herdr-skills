@@ -269,23 +269,16 @@ the selection was made in. `copy_on_select` and `[[startup]]` hooks exist in her
      file names open as selected; a path followed by a one- or two-syllable particle opens without it (`kitty.rs:58`
      plus a particle opens line 58); a file whose name really ends in what looks like a particle still opens as
      selected.
-   - **Folders.** A folder (absolute, `~/`, or joined onto the pane's working folder or its git root) opens as a
-     folder page.
    - **Path shape.** The form that resolves must contain a `/`, a file extension (`.md`, `.rs` ...) or a `:line`.
      Selection has no link handler pattern in front of it, so without this a double-click on a word in prose would
      open whatever file the word names: `peek` matches `herdr-plugins/peek/bin/peek` by its tail, `peeking` would
-     trim to it, `LICENSE` and `docs` exist. Those stay no-ops; a bare extensionless name opens by Ctrl+click on a
-     hyperlink only.
+     trim to it, `LICENSE` exists. Those stay no-ops; a bare extensionless name opens by Ctrl+click on a hyperlink
+     only.
+   Folders open nothing in this round (TODO below).
    Binary files other than images (a NUL byte in the first 8 KiB) are skipped. Nothing found: nothing happens, no
    notification (most selections are not paths).
 4. One result opens in the viewer beside the matched pane without taking focus, as a click does; several show the
    numbered list.
-
-### Folder page
-
-A new page kind: folders first, then files, each sorted by name, with size and modification time; a `..` entry for
-the parent; at most 500 entries, then "N more". Entries are local links, so clicking one opens a file in peek or
-another folder page, and `h` goes back. FSEvents on the folder (not recursive) redraw it when entries change.
 
 ### Turning it off
 
@@ -304,14 +297,17 @@ nothing in the hand check; later versions are not checked.
 To check before the plan's tasks: that herdr leaves a detached child of a `[[startup]]` hook or of an action running,
 and records the hook as finished (a spike with a sleeper in the separate session).
 
+TODO (not in 0.6.0, user decision 2026-11-16): a selected folder opens a folder page (folders first, then files, by
+name, with size and time; `..`; capped; entries open in peek; redrawn on change). Left out because everything else
+peek shows is a file.
+
 ### Tests
 
 - Neutral (`select` module): the text filter; pane matching (row, wrapped rows, several panes, focus preference, no
-  match); trailing-character trimming; the path-shape gate (`peek`, `peeking`, `LICENSE`, `docs` open nothing);
-  resolution against temporary folders with Korean folder and file names in both NFC and NFD form, particles after
-  files, lines and folders; binary skip; the watcher's decision loop driven by
+  match); trailing-character trimming; the path-shape gate (`peek`, `peeking`, `LICENSE` open nothing); resolution
+  against temporary folders with Korean folder and file names in both NFC and NFD form, particles after files and
+  lines, a selected folder opening nothing; binary skip; the watcher's decision loop driven by
   a fake clipboard (change count and string) and fake screens.
-- Folder page: order, the 500 cap, links, `..`.
 - macOS: the pasteboard reader; the lock and the exit on a dead socket.
 - Integration in a separate herdr 0.9.5 session: a selection by drag and by double-click opens the viewer beside the
   pane it was made in (made by hand, as no API makes a herdr selection), plus `pbcopy` of on-screen and off-screen
