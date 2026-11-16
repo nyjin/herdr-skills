@@ -162,10 +162,15 @@ check_runs() {
 
 # Unit tests (tests/test_*.py) of every skill and herdr plugin, each run from its own directory. The live_*.py and
 # hook_cost.py scripts start claude and are run by hand.
+# Python units run unittest on their tests/*.py; Rust units (a Cargo.toml) run cargo test. On Linux only a Rust
+# unit's platform-neutral modules build; its macOS parts are behind cfg(target_os = "macos").
 check_unit() {
   local unit fail=0
   for unit in skills/*/ herdr-plugins/*/; do
-    [ -d "${unit}tests" ] || continue
+    if [ -f "${unit}Cargo.toml" ]; then
+      (cd "$unit" && cargo test --quiet) || { echo "::error::${unit} cargo tests failed"; fail=1; }
+    fi
+    compgen -G "${unit}tests/*.py" >/dev/null || continue
     (cd "$unit" && python3 -m unittest discover -s tests) || { echo "::error::${unit} unit tests failed"; fail=1; }
   done
   return "$fail"

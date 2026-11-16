@@ -1,0 +1,68 @@
+{
+  "expand": "renderedFields,names,schema,operations,editmeta,changelog,versionedRepresentations",
+  "id": "10001",
+  "self": "https://example.atlassian.net/rest/api/3/issue/10001",
+  "key": "ABC-1",
+  "fields": {
+    "summary": "Login fails for <SSO> users",
+    "status": {
+      "self": "https://example.atlassian.net/rest/api/3/status/3",
+      "description": "",
+      "name": "In Progress",
+      "id": "3",
+      "statusCategory": { "id": 4, "key": "indeterminate", "colorName": "yellow", "name": "In Progress" }
+    },
+    "assignee": {
+      "self": "https://example.atlassian.net/rest/api/3/user?accountId=5b10a2844c20165700ede21g",
+      "accountId": "5b10a2844c20165700ede21g",
+      "displayName": "Dana Kim (QA & Ops)",
+      "active": true,
+      "timeZone": "Asia/Seoul",
+      "accountType": "atlassian"
+    },
+    "description": {
+      "type": "doc",
+      "version": 1,
+      "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "Steps to reproduce" }] }]
+    },
+    "comment": {
+      "comments": [
+        {
+          "self": "https://example.atlassian.net/rest/api/3/issue/10001/comment/100",
+          "id": "100",
+          "author": { "accountId": "5b10ac8d82e05b22cc7d4ef5", "displayName": "Lee Park", "active": true },
+          "body": { "type": "doc", "version": 1, "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "Seen on staging too" }] }] },
+          "created": "2026-11-01T10:00:00.000+0900",
+          "updated": "2026-11-01T10:00:00.000+0900",
+          "jsdPublic": true
+        }
+      ],
+      "self": "https://example.atlassian.net/rest/api/3/issue/10001/comment",
+      "maxResults": 1,
+      "total": 1,
+      "startAt": 0
+    }
+  },
+  "renderedFields": {
+    "summary": null,
+    "status": null,
+    "assignee": null,
+    "description": "<p>Steps to <strong>reproduce</strong>: see <a href=\"/browse/ABC-2\">ABC-2</a>.</p>\n<p><span class=\"image-wrap\"><img src=\"/rest/api/3/attachment/content/1\" alt=\"screen.png\" border=\"0\"></span></p>\n<p><img src=\"https://cdn.example.invalid/logo.png\" alt=\"logo\"> <img src=\"https://example.atlassian.net.invalid/steal.png\" alt=\"look-alike\"></p>",
+    "comment": {
+      "comments": [
+        {
+          "self": "https://example.atlassian.net/rest/api/3/issue/10001/comment/100",
+          "id": "100",
+          "author": { "accountId": "5b10ac8d82e05b22cc7d4ef5", "displayName": "Lee Park", "active": true },
+          "body": { "type": "doc", "version": 1, "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "Seen on staging too" }] }] },
+          "created": "01/Nov/26 10:00 AM",
+          "updated": "01/Nov/26 10:00 AM",
+          "jsdPublic": true
+        }
+      ],
+      "maxResults": 1,
+      "total": 1,
+      "startAt": 0
+    }
+  }
+}

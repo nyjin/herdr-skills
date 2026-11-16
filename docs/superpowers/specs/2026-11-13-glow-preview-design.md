@@ -1,6 +1,7 @@
 # glow-preview Design
 
 > Renamed to `peek` on 2026-11-15 (`herdr-plugins/peek`). This record keeps the names it was written with.
+> Superseded on 2026-11-15 by `2026-11-15-peek-webkit-viewer-design.md` (WebKit viewer in one Rust binary); path resolution moved there.
 
 ## Purpose
 

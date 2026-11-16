@@ -1,0 +1,18 @@
+{
+  "startAt": 0,
+  "maxResults": 100,
+  "total": 1,
+  "comments": [
+    {
+      "self": "https://example.atlassian.net/rest/api/3/issue/10001/comment/100",
+      "id": "100",
+      "author": { "accountId": "5b10ac8d82e05b22cc7d4ef5", "displayName": "Lee Park", "active": true },
+      "body": { "type": "doc", "version": 1, "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "Seen on staging too" }] }] },
+      "renderedBody": "<p>Seen on <em>staging</em> too</p>",
+      "updateAuthor": { "accountId": "5b10ac8d82e05b22cc7d4ef5", "displayName": "Lee Park", "active": true },
+      "created": "2026-11-01T10:00:00.000+0900",
+      "updated": "2026-11-01T10:00:00.000+0900",
+      "jsdPublic": true
+    }
+  ]
+}

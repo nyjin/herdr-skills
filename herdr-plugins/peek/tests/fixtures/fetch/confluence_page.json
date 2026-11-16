@@ -1,0 +1,26 @@
+{
+  "id": "123456",
+  "status": "current",
+  "title": "Deploy runbook",
+  "spaceId": "98765",
+  "parentId": "123000",
+  "parentType": "page",
+  "position": 1,
+  "authorId": "5b10ac8d82e05b22cc7d4ef5",
+  "ownerId": "5b10ac8d82e05b22cc7d4ef5",
+  "lastOwnerId": null,
+  "createdAt": "2026-10-20T01:02:03.000Z",
+  "version": { "createdAt": "2026-11-10T04:05:06.000Z", "message": "", "number": 3, "minorEdit": false, "authorId": "5b10ac8d82e05b22cc7d4ef5" },
+  "body": {
+    "view": {
+      "representation": "view",
+      "value": "<h2>Before you start</h2><p>Check the <a href=\"/wiki/spaces/OPS/pages/123000/Checklist\">checklist</a>.</p><p><img class=\"confluence-embedded-image\" src=\"https://example.atlassian.net/wiki/download/attachments/123456/diagram.png?version=1&amp;api=v2\" alt=\"diagram\"></p>"
+    }
+  },
+  "_links": {
+    "webui": "/spaces/OPS/pages/123456/Deploy+runbook",
+    "editui": "/pages/resumedraft.action?draftId=123456",
+    "tinyui": "/x/QOIB",
+    "base": "https://example.atlassian.net/wiki"
+  }
+}
