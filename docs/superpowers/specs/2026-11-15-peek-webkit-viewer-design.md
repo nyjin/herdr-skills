@@ -149,9 +149,9 @@ The clicked string is judged after stripping `file://`, a trailing `:line[:col]`
 - Raw mode. Mouse reports in SGR pixels: `?1000h ?1003h ?1006h ?1016h` (clicks, moves for hover, wheel).
 - Wheel scrolls. A click on the page maps the pixel to page coordinates; `elementFromPoint(...).closest('a')` gives
   the link: a local file opens in the same viewer and pushes history; a web address goes to `open`.
-- Default keys: `j`/`k`/↑/↓ a few lines, `space`/`b`/PgDn/PgUp a screen, `g`/`G` top/bottom, `/` find, `n`/`N` next
-  and previous match, `r` reload, `v` rendered/source (was `t` until 2026-11-17), `+`/`-`/`0` zoom in/out/reset, `s` screenshot, `o` open in
-  browser, `h`/Backspace back, `q` close.
+- Default keys: `j`/`k`/↑/↓ a few lines, `space`/`b`/PgDn/PgUp a screen, `g`/`G` top/bottom, `/` find (keys on the
+  find row: "Top bar"), `r` reload, `v` rendered/source (was `t` until 2026-11-17), `+`/`-`/`0` zoom in/out/reset,
+  `s` screenshot, `o` open in browser, `h`/Backspace back, `q` close.
 - The same commands exist as herdr actions, so they work from the Claude pane too.
 
 ## Top bar
