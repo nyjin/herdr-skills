@@ -222,6 +222,86 @@ Debounce 300 ms; reload and keep the reading position.
 The exact keys for the find toggles, tooltip placement, tile budget tuning, the font size formula, error page wording,
 and the HTTP client crate.
 
+## Select to open (0.6.0, decided 2026-11-16)
+
+herdr hands plugins no click on a path printed as plain text (see "What shipped" below), and no selection or copy
+event either (`src/api/schema/events.rs` lists pane, tab, workspace and worktree events only). What herdr does do: when
+a mouse selection ends, by drag or double-click, it copies the text to the system clipboard (`[ui] copy_on_select`, on
+by default; `pbcopy` on macOS). peek uses that copy as its signal.
+
+User decisions: web addresses and hyperlinks keep Ctrl+click; paths open by selecting them (drag or double-click).
+Nothing changes what agents or programs print, and nothing sits between herdr and the pane's shell. When herdr starts
+matching link handler patterns against plain text (herdr discussion #609), paths open by Ctrl+click through the
+existing link handlers with no change in peek; select to open is then reconsidered (off by default or removed).
+
+Checked by hand in a herdr 0.9.5 session (2026-11-16): a drag copied `2026-11-15-repo-layout-and-language-design.md`
+from a shell pane; a double-click copied `docs/superpowers/specs/` plus the Korean particle U+C5D0 written right after
+it, from a Claude Code pane (herdr's word selection splits at spaces, and Korean attaches particles without one). In
+both cases the system clipboard changed and the text was on that pane's screen. herdr did not move focus to the pane
+the selection was made in. `copy_on_select` and `[[startup]]` hooks exist in herdr 0.9.3, so the minimum stays.
+
+### The watcher
+
+`peek watch` is a background process, one per herdr server.
+
+- Started detached by a `[[startup]]` hook (`peek watch --spawn`, which forks and returns) and, so that a fresh
+  `herdr plugin link` needs no restart, by every `peek link`, `peek action` and `peek viewer` run when none is running.
+  One per server: a lock file in `~/.local/state/peek/` keyed by `HERDR_SOCKET_PATH`. It exits when the server's
+  socket stops answering twice in a row, 5 s apart (a live handoff reruns the startup hook under the new server).
+- Every 150 ms it reads the pasteboard's change count (`NSPasteboard.changeCount`), not its contents. Only when the
+  count changed does it read the string, and only when select to open is on.
+- The text is kept in memory for the checks below and never written anywhere; `viewer.log` records an opened path
+  only.
+
+### Which pane, which file
+
+1. The text is one line, 1 to 1024 characters, without control characters.
+2. The panes of the tab shown in the focused workspace (`herdr pane list`), except peek's viewer panes, are read
+   (`herdr pane read --source visible`). A pane matches when the text is in one of its rows, or in its rows joined
+   without line breaks (a path wrapped over two rows). The focused pane wins when several match, otherwise the first.
+   No match: the copy came from elsewhere (a browser, an editor) and nothing happens.
+3. The text is resolved for the matched pane like a click (path resolution above), with two additions:
+   - **Trailing characters.** When the text as selected resolves to nothing, up to 4 characters are dropped from its
+     end, one at a time, and the longest form that resolves wins. Nothing is judged by script, so Korean folder and
+     file names open as selected; a path followed by a one- or two-syllable particle opens without it (`kitty.rs:58`
+     plus a particle opens line 58); a file whose name really ends in what looks like a particle still opens as
+     selected.
+   - **Folders.** A folder (absolute, `~/`, or joined onto the pane's working folder or its git root) opens as a
+     folder page.
+   Binary files other than images (a NUL byte in the first 8 KiB) are skipped. Nothing found: nothing happens, no
+   notification (most selections are not paths).
+4. One result opens in the viewer beside the matched pane without taking focus, as a click does; several show the
+   numbered list.
+
+### Folder page
+
+A new page kind: folders first, then files, each sorted by name, with size and modification time; a `..` entry for
+the parent; at most 500 entries, then "N more". Entries are local links, so clicking one opens a file in peek or
+another folder page, and `h` goes back. FSEvents on the folder (not recursive) redraw it when entries change.
+
+### Turning it off
+
+On by default. The herdr action `peek: select to open on/off` (`select-to-open`) toggles it; the choice is kept with
+the zoom in `~/.local/state/peek/`. The README says what it relies on and what it cannot see:
+
+- `copy_on_select` must stay on.
+- Selecting the same text twice in a row opens nothing the second time: herdr does not copy text the clipboard
+  already holds.
+- A client attached over SSH copies to its own machine's clipboard, which peek cannot see.
+- Selecting a path only to copy it also opens it (without focus).
+
+### Tests
+
+- Neutral (`select` module): the text filter; pane matching (row, wrapped rows, several panes, focus preference, no
+  match); trailing-character trimming; resolution against temporary folders with Korean folder and file names in
+  both NFC and NFD form, particles after files, lines and folders; binary skip; the watcher's decision loop driven by
+  a fake clipboard (change count and string) and fake screens.
+- Folder page: order, the 500 cap, links, `..`.
+- macOS: the pasteboard reader; the lock and the exit on a dead socket.
+- Integration in a separate herdr 0.9.5 session: a selection by drag and by double-click opens the viewer beside the
+  pane it was made in (made by hand, as no API makes a herdr selection), plus `pbcopy` of on-screen and off-screen
+  text for the timing (copy to first change) and the no-op cases.
+
 ## What shipped (0.5.0, 2026-11-15)
 
 Built as designed, in the order of `docs/superpowers/plans/2026-11-15-peek-webkit-viewer-plan.md` (Tasks 2-4 by
@@ -250,4 +330,5 @@ Differences from the design above:
   text. A path printed as plain text, which is how Claude Code prints paths in a herdr pane, is not clickable; herdr
   does not detect paths in plain text (herdr discussion #609). Ways around it that change what agents print or put a
   relay between herdr and the shell were rejected: the first changes the user's output, the second hides the pane's
-  foreground process from herdr's agent detection and working-folder tracking.
+  foreground process from herdr's agent detection and working-folder tracking. Paths open by selection instead:
+  "Select to open" above.
