@@ -14,7 +14,9 @@ by git: they show real, partly private documents).
 | `rust/src/bin/srchtml.rs` | Source file to a page highlighted by syntect (onig), line numbers, the clicked line marked |
 | `tools/latency2.swift` | Key-to-screen time for one window: grab it, send the key, grab until its pixels change |
 | `tools/winlist.swift` | Window ids and bounds, to find the experiment window |
-| `drivers/*.py` | The runs below. They expect the scratch layout they were written in (a folder holding `out/`, the built binaries and `herdr095/`); adjust the paths at the top |
+
+The runs below were driven by throwaway Python scripts over the renderer's JSON lines and the tools above; they were
+removed on 2026-11-17 (the repository keeps no Python for peek) and are in the history before that date.
 
 Build: `cargo build --release` in `rust/`; `swiftc -O -o latency2 tools/latency2.swift`. herdr 0.9.5 for the pane runs:
 `gh release download v0.9.5 -R herdrdev/herdr -p herdr-macos-aarch64`, run as a separate session so the herdr in use
