@@ -4,7 +4,7 @@
 # Usage: scripts/check.sh [check ...]     no argument runs every check, in order
 #        scripts/check.sh --list          print the check names
 #
-# Checks: skill-spec names readme language finalize-brief hooks runs unit
+# Checks: skill-spec names readme language finalize-brief hooks runs release unit
 # Errors are printed as GitHub annotations (::error ...), which read fine in a terminal too.
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
@@ -12,7 +12,7 @@ cd "$(dirname "$0")/.." || exit 1
 # HERDR_PW_WORKER would make every simulated caller a worker; drop it, and the tab's workspace with it.
 unset HERDR_PW_WORKER HERDR_WORKSPACE_ID
 
-CHECKS=(skill-spec names readme language finalize-brief hooks runs unit)
+CHECKS=(skill-spec names readme language finalize-brief hooks runs release unit)
 TMP="${RUNNER_TEMP:-$(mktemp -d)}"
 SKILL=skills/herdr-parallel-worktree
 
@@ -159,6 +159,11 @@ check_runs() {
   python3 "$r" --help >/dev/null || { echo "::error::runs.py --help failed"; return 1; }
   HERDR_SKILLS_DATA_HOME="$data" python3 "$r" show --root . | jq -e 'length == 0' >/dev/null \
     || { echo "::error::runs.py show on an empty registry should print []"; return 1; }
+}
+
+# scripts/release.sh's version decision, against throwaway git repositories with a fake gh that records its calls.
+check_release() {
+  python3 -m unittest discover -s scripts/tests || { echo "::error::scripts/release.sh tests failed"; return 1; }
 }
 
 # Unit tests (tests/test_*.py) of every skill and herdr plugin, each run from its own directory. The live_*.py and

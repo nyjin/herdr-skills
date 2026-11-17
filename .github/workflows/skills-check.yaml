@@ -39,5 +39,34 @@ jobs:
       - name: runs.py smoke test
         run: scripts/check.sh runs
 
+      - name: release.sh version decision
+        run: scripts/check.sh release
+
       - name: Unit tests
         run: scripts/check.sh unit
+
+  # A push to main that passed the checks publishes a release when the commits since the last v<semver> tag changed
+  # skills/; their Conventional Commit types set the bump (scripts/release.sh). Other pushes publish nothing.
+  release:
+    name: Publish a skills release
+    needs: verify
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    # Two pushes in a row must not both compute and publish the same next version.
+    concurrency:
+      group: skills-release
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the whole history and every tag: release.sh compares HEAD with the last release tag
+
+      - name: Ensure gh >= 2.90.0
+        run: scripts/ensure-gh.sh
+
+      - name: Publish a release if skills/ changed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: scripts/release.sh
