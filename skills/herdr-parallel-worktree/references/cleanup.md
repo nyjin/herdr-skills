@@ -17,22 +17,23 @@ Never at any other time: not when a worker finishes, not with its results (step 
 
 Scan the current repository: the git checkout this session works in, the top level of its working directory (step 0's `ROOT` when the user named no other repository).
 
-```bash
-CUR="$(git -C "<this session's working directory>" rev-parse --show-toplevel)"
-python3 "<skill directory>/scripts/runs.py" scan --root "$CUR"
-```
-
-When that is not inside a git repository, there is no current repository; then, and when the user asks for every repository's workers, scan them all:
+When that is not inside a git repository, there is no current repository, and the scan covers every repository:
 
 ```bash
-python3 "<skill directory>/scripts/runs.py" scan --all
+if CUR="$(git -C "<this session's working directory>" rev-parse --show-toplevel 2>/dev/null)"; then
+  python3 "<skill directory>/scripts/runs.py" scan --root "$CUR"
+else
+  python3 "<skill directory>/scripts/runs.py" scan --all
+fi
 ```
+
+When the user asks for every repository's workers, run the `--all` scan whatever the current repository.
 
 Add `--fetch` when the user wants merge and push status checked against the remote; without it, remote-tracking refs may be stale.
 
 It only looks at runs recorded in `runs.json` (SKILL.md step 3 records each worker). herdr cannot tell which worktrees this skill created, and removing a worktree the user made by hand could destroy their work.
 
-`workers` holds every open run of the scanned repositories, the ones this run just started included (they are `working`), in registry order. `open_elsewhere` is the number of open runs in other repositories (`0` with `--all`). Each entry has:
+`workers` holds every open run of the scanned repositories, in registry order. The ones this run just started are among them: usually `working`, so left out, but one that already finished its first turn is listed like any other. `open_elsewhere` is the number of open runs in other repositories (`0` with `--all`). Each entry has:
 
 | Field | Meaning |
 |---|---|
@@ -101,7 +102,7 @@ Then let the user pick:
 
 ## 3. Clean up each picked worker
 
-Map the numbers or options to names using the table that was shown, then scan again (the same `--root` or `--all`) right before removing anything. Clean up each picked worker that is still `cleanable` in the new scan; for one that no longer is, report its blockers and leave it.
+Map the numbers or options to the entries of the table that was shown, by `root` and `name` (a name can repeat across repositories), then scan again (the same `--root` or `--all`) right before removing anything. Clean up each picked worker that is still `cleanable` in the new scan (the entry with the same `root` and `name`); for one that no longer is, report its blockers and leave it.
 
 Run the entry's `remove_command`, then mark it with the entry's own `root`:
 
