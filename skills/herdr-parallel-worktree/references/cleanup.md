@@ -33,7 +33,7 @@ Add `--fetch` when the user wants merge and push status checked against the remo
 
 It only looks at runs recorded in `runs.json` (SKILL.md step 3 records each worker). herdr cannot tell which worktrees this skill created, and removing a worktree the user made by hand could destroy their work.
 
-`workers` holds every open run of the scanned repositories, in registry order. The ones this run just started are among them: usually `working`, so left out, but one that already finished its first turn is listed like any other. `open_elsewhere` is the number of open runs in other repositories (`0` with `--all`). Each entry has:
+`workers` holds every open run of the scanned repositories, in registry order, the ones this run just started included; the list after starting workers leaves those out (section 2). `open_elsewhere` is the number of open runs in other repositories (`0` with `--all`). Each entry has:
 
 | Field | Meaning |
 |---|---|
@@ -75,7 +75,11 @@ A run whose worktree is already gone (`worktree_exists: false`) has nothing left
 
 ## 2. Show and ask
 
-Run the scan right before showing it, not earlier: `focused` and the worker status change as the user moves around the sidebar. Under the heading **Cleanable workers**, in the user's language like the rest of the report, show one numbered table of the `cleanable` entries, in the scan's order:
+Run the scan right before showing it, not earlier: `focused` and the worker status change as the user moves around the sidebar.
+
+**After starting workers**, leave out every worker this run started (match by `root` and `name`): from the table, from the "Left out" line and from the `open_elsewhere` count. They were started a moment ago and are not candidates for anything. A cleanup the user asks for lists every worker.
+
+Under the heading **Cleanable workers**, in the user's language like the rest of the report, show one numbered table of the `cleanable` entries, in the scan's order:
 
 | # | Name | For | Branch | Status | Last activity | Work |
 |---|---|---|---|---|---|---|

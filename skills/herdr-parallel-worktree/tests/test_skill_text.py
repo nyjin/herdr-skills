@@ -127,6 +127,12 @@ class SkillTextTest(unittest.TestCase):
         self.assertTrue(any("--root" in r for r in scans), scans)
         self.assertTrue(any("--all" in r for r in scans), scans)
 
+    def test_list_after_start_leaves_out_this_runs_workers(self):
+        # user decision: workers started a moment ago are not candidates for anything, so the list shown after
+        # starting them neither lists nor names them; a cleanup the user asks for lists every worker
+        self.assertIn("leave out every worker this run started", section(read(CLEANUP), "2. Show and ask"))
+        self.assertIn("leaving out every worker this run started", section(read(SKILL_MD), "4. Wait and watch"))
+
     def test_add_records_the_summary(self):
         # the cleanup list shows what each worker is for from this summary
         lines = [l for l in read(SKILL_MD).splitlines() if re.search(r'runs\.py"? add\b.*--name', l)]
