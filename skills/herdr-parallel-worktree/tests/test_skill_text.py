@@ -133,6 +133,15 @@ class SkillTextTest(unittest.TestCase):
         self.assertIn("leave out every worker this run started", section(read(CLEANUP), "2. Show and ask"))
         self.assertIn("leaving out every worker this run started", section(read(SKILL_MD), "4. Wait and watch"))
 
+    def test_list_shows_status_first_in_the_scans_order(self):
+        # user decision: status is the leftmost column, then the number to pick by; rows keep the scan's order,
+        # which runs.py sorts by status (done, working, idle, then any other)
+        show = section(read(CLEANUP), "2. Show and ask")
+        header = next((l for l in show.splitlines() if l.startswith("| ") and "Name" in l), "")
+        self.assertTrue(header.startswith("| Status | # | Name |"), header)
+        self.assertIn("in the scan's order (by status)", show)
+        self.assertIn("in the same order", show)
+
     def test_add_records_the_summary(self):
         # the cleanup list shows what each worker is for from this summary
         lines = [l for l in read(SKILL_MD).splitlines() if re.search(r'runs\.py"? add\b.*--name', l)]

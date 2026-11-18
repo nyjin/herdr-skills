@@ -19,6 +19,7 @@ User decisions (2026-11-18):
 5. The table lists only workers that can be cleaned up now, so it needs no cleanable column. The others are named in one line under the table, each with its reason. A worker with uncommitted changes cannot be cleaned up until they are committed, and hiding it would let it pile up unnoticed again.
 6. The table's heading is just "Cleanable workers", written in the user's language like the rest of the report. The cleanup report afterwards already says that branches stay and how to resume.
 7. The list after new workers start leaves out the workers that run started, from the table and from the "Left out" line: they were started a moment ago and are not candidates for anything. A cleanup the user asks for later lists every worker.
+8. The status is the leftmost column, before the number used to pick, and the rows are sorted by status: `done`, then `working`, then `idle`, then any other (`blocked`, unknown, no agent running); within one status the order stays. The "Left out" line follows the same order. `runs.py scan` sorts, so the flow shows its order (follow-up 6).
 
 ## 2. `runs.py scan`
 
@@ -34,7 +35,7 @@ Output (JSON):
 
 | Key | Content |
 |---|---|
-| `workers` | every open run of the scanned repositories, grouped by repository in registry order; each entry below |
+| `workers` | every open run of the scanned repositories, sorted by `agent_status` (`done`, `working`, `idle`, then any other), registry order within one status; each entry below |
 | `open_elsewhere` | with `--root`: the number of open runs in other repositories; `0` with `--all` |
 | `untracked_worktrees` | linked worktrees of the scanned repositories that the registry does not record, each with its `root`; shown, never removed |
 
@@ -103,7 +104,7 @@ A run whose worktree is already gone has no worktree checks and `remove_command:
 
 - **When**: right before the report after new workers start (SKILL.md step 4), and when the user asks to clean up. Not in step 0 any more (the statuses it showed were stale by the time of the report), not after results come in, and not to free a name.
 - **Scan**: `scan --root "$CUR"` for the current repository (`git rev-parse --show-toplevel` of the session's working directory), falling back to `scan --all` in one guarded command when that fails; `scan --all` when the session has no current repository or the user asks for every repository.
-- **Show**: under the heading "Cleanable workers", one numbered table of the `cleanable` entries: `#`, name, what it is for (`summary`), branch, status, last activity, where its work stands. Under it, only when there are any: one line naming the others with their reasons (`Left out: cli-run-impl (working), proj-7 (3 uncommitted changes)`), the line with `open_elsewhere`, and the untracked worktrees. With nothing cleanable, one line says so instead of the table, followed by the left-out line, and nothing is asked. The list after starting workers leaves out every worker this run started, from the table, the left-out line and the `open_elsewhere` count: they were started a moment ago and are not candidates for anything (user decision, follow-up 5). The scan still reports them; the orchestrator knows their `root` and `name` and filters them, as it filters the left-out ones. A cleanup the user asks for lists every worker.
+- **Show**: under the heading "Cleanable workers", one numbered table of the `cleanable` entries in the scan's order: status, `#`, name, what it is for (`summary`), branch, last activity, where its work stands. Under it, only when there are any: one line naming the others with their reasons (`Left out: cli-run-impl (working), proj-7 (3 uncommitted changes)`), the line with `open_elsewhere`, and the untracked worktrees. With nothing cleanable, one line says so instead of the table, followed by the left-out line, and nothing is asked. The list after starting workers leaves out every worker this run started, from the table, the left-out line and the `open_elsewhere` count: they were started a moment ago and are not candidates for anything (user decision, follow-up 5). The scan still reports them; the orchestrator knows their `root` and `name` and filters them, as it filters the left-out ones. A cleanup the user asks for lists every worker.
 - **Ask**: with one to four cleanable workers, one multiple-choice question that allows several answers, one option per worker, plus "None" while there is room (with four, the question says that answering "none" keeps them all); with more, ask for the numbers. "None" is always a valid answer, and the orchestrator never suggests which to pick.
 - **Clean up**: numbers map to the entries of the table that was shown, by `root` and `name` (a name can repeat across repositories). Scan again right before removing, clean up each picked worker that is still cleanable (its `remove_command`, then `mark-cleaned --root <its root>`), and report the ones that no longer are with their blockers. A run whose worktree is gone is only marked.
 - **Report**: as before, with the resume clues per cleaned worker; the "why it was cleanable" column becomes "where its work stood".

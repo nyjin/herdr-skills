@@ -11,7 +11,8 @@ Usage:
               --placement workspace|tab [--brief PATH] [--summary TEXT]
   runs.py scan (--root ROOT | --all) [--fetch]
                                           every open run of ROOT (or of every repository): where its work stands,
-                                          cleanable or what blocks it (JSON)
+                                          cleanable or what blocks it (JSON), sorted by status: done, working,
+                                          idle, then any other
   runs.py mark-cleaned --root ROOT --name N [--agent A] [--session-id SID]
   runs.py mark-open --root ROOT --name N --workspace W --pane P [--placement workspace|tab]
   runs.py relocate --root ROOT --name N --workspace W --pane P [--placement workspace|tab]
@@ -303,6 +304,15 @@ def work_state(r):
 
 WORK_STATES = ("no_commits", "merged", "same_patches", "same_content", "pushed", "not_merged", "unknown")
 
+# The order the cleanup list shows workers in: done first, then working, then idle, then anything else (blocked,
+# unknown, no agent running). Within one status the registry order stays (the sort is stable).
+STATUS_ORDER = ("done", "working", "idle")
+
+
+def status_rank(entry):
+    s = entry.get("agent_status")
+    return STATUS_ORDER.index(s) if s in STATUS_ORDER else len(STATUS_ORDER)
+
 
 def last_activity(r, work):
     """The branch's last commit (committer date), or when the run started if it has no commits of its own."""
@@ -412,6 +422,7 @@ def cmd_scan(a):
             if w.get("is_linked_worktree") and os.path.realpath(w.get("path") or "/") not in tracked:
                 out["untracked_worktrees"].append({"root": root, "path": w.get("path"), "branch": w.get("branch"),
                                                    "workspace": w.get("open_workspace_id")})
+    out["workers"].sort(key=status_rank)
     print(json.dumps(out, ensure_ascii=False, indent=2))
 
 

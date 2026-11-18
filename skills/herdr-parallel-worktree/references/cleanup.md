@@ -33,7 +33,7 @@ Add `--fetch` when the user wants merge and push status checked against the remo
 
 It only looks at runs recorded in `runs.json` (SKILL.md step 3 records each worker). herdr cannot tell which worktrees this skill created, and removing a worktree the user made by hand could destroy their work.
 
-`workers` holds every open run of the scanned repositories, in registry order, the ones this run just started included; the list after starting workers leaves those out (section 2). `open_elsewhere` is the number of open runs in other repositories (`0` with `--all`). Each entry has:
+`workers` holds every open run of the scanned repositories, sorted by `agent_status`: `done`, then `working`, then `idle`, then any other (`blocked`, unknown, no agent running), in registry order within one status. The ones this run just started are included; the list after starting workers leaves those out (section 2). `open_elsewhere` is the number of open runs in other repositories (`0` with `--all`). Each entry has:
 
 | Field | Meaning |
 |---|---|
@@ -79,19 +79,19 @@ Run the scan right before showing it, not earlier: `focused` and the worker stat
 
 **After starting workers**, leave out every worker this run started (match by `root` and `name`): from the table, from the "Left out" line and from the `open_elsewhere` count. They were started a moment ago and are not candidates for anything. A cleanup the user asks for lists every worker.
 
-Under the heading **Cleanable workers**, in the user's language like the rest of the report, show one numbered table of the `cleanable` entries, in the scan's order:
+Under the heading **Cleanable workers**, in the user's language like the rest of the report, show one numbered table of the `cleanable` entries, in the scan's order (by status), with the status as the leftmost column and the number to pick by next to it:
 
-| # | Name | For | Branch | Status | Last activity | Work |
+| Status | # | Name | For | Branch | Last activity | Work |
 |---|---|---|---|---|---|---|
-| 1 | `proj-101` | Implement PROJ-101 | `feature/PROJ-101` | idle | 2026-10-12 (37 days ago) | not merged (3 commits) |
-| 2 | `proj-98` | Fix the flaky payments test | `fix/flaky-payments` | done | 2026-11-02 (16 days ago) | in main by content (squash merge) |
+| done | 1 | `proj-98` | Fix the flaky payments test | `fix/flaky-payments` | 2026-11-02 (16 days ago) | in main by content (squash merge) |
+| idle | 2 | `proj-101` | Implement PROJ-101 | `feature/PROJ-101` | 2026-10-12 (37 days ago) | not merged (3 commits) |
 
 - **For** is `summary`, cut to about 50 characters and ended with `…` when longer; empty when there is none.
 - **Work** is `work.text`. **Last activity** is a date and how long ago.
 
 Under the table, only when there are any:
 
-- One line naming the workers left out (not `cleanable`), each with its blockers: `Left out: cli-run-impl (working), proj-7 (3 uncommitted changes)`. They stay visible this way: a worker with uncommitted changes cannot be cleaned up until they are committed, and hiding it would let it pile up unnoticed again.
+- One line naming the workers left out (not `cleanable`), in the same order, each with its blockers: `Left out: cli-run-impl (working), proj-7 (3 uncommitted changes)`. They stay visible this way: a worker with uncommitted changes cannot be cleaned up until they are committed, and hiding it would let it pile up unnoticed again.
 - With `--root`, one line with `open_elsewhere`: "N open workers in other repositories; ask to clean up all workers to see them."
 - The untracked worktrees, one line each, as not this skill's to remove.
 

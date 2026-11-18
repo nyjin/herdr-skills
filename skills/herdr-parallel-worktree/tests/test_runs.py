@@ -16,7 +16,8 @@ RUNS_PY = os.path.join(os.path.dirname(HERE), "scripts", "runs.py")
 # A fake herdr: logs every call to $CALLS; `pane get` reports a claude session whose id comes from the pane id and
 # the tab `<ws>:t<n>` for pane `<ws>:p<n>` (pane_not_found for panes listed in $CLOSED); `tab get` reports
 # focused for tabs listed in $FOCUSED_TABS; `workspace get` a workspace whose status is $WS_STATUS (default idle),
-# focused when listed in $FOCUSED_WS. $HERDR_DOWN makes every call print something that is not JSON.
+# focused when listed in $FOCUSED_WS; $WS_STATUS_MAP ({workspace: status or null}) sets it per workspace.
+# $HERDR_DOWN makes every call print something that is not JSON.
 FAKE_HERDR = r'''#!/usr/bin/env python3
 import json, os, sys
 args = sys.argv[1:]
@@ -48,7 +49,9 @@ if cmd == ["tab", "list"]:
 if cmd == ["pane", "list"]:
     out({"panes": [{"pane_id": t["tab_id"].replace(":t", ":p"), "tab_id": t["tab_id"], "cwd": t["cwd"]} for t in tabs]})
 if cmd == ["workspace", "get"]:
-    out({"workspace": {"workspace_id": args[2], "agent_status": os.environ.get("WS_STATUS", "idle"),
+    by_ws = json.loads(os.environ.get("WS_STATUS_MAP") or "{}")
+    status = by_ws[args[2]] if args[2] in by_ws else os.environ.get("WS_STATUS", "idle")
+    out({"workspace": {"workspace_id": args[2], "agent_status": status,
                        "focused": args[2] in os.environ.get("FOCUSED_WS", "").split()}})
 if cmd == ["worktree", "list"]:   # $WORKTREES: [{"path", "branch"}], every one a linked worktree
     out({"worktrees": [{"is_linked_worktree": True, "open_workspace_id": None, **w}
@@ -72,7 +75,7 @@ class RunsTest(unittest.TestCase):
                         PATH=bin_dir + os.pathsep + os.environ["PATH"], GIT_CONFIG_GLOBAL=empty,
                         GIT_CONFIG_NOSYSTEM="1", GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t",
                         GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
-        for k in ("HERDR_DOWN", "WS_STATUS", "FOCUSED_WS", "FOCUSED_TABS", "TABS", "CLOSED", "WORKTREES"):
+        for k in ("HERDR_DOWN", "WS_STATUS", "WS_STATUS_MAP", "FOCUSED_WS", "FOCUSED_TABS", "TABS", "CLOSED", "WORKTREES"):
             self.env.pop(k, None)
         self.repo = self.make_repo("repo")
 
@@ -389,6 +392,23 @@ class RunsTest(unittest.TestCase):
                                               {"path": "/elsewhere/hand-made", "branch": "x"}]))
         self.assertEqual(out["untracked_worktrees"],
                          [{"root": self.repo, "path": "/elsewhere/hand-made", "branch": "x", "workspace": None}])
+
+    def test_scan_sorts_by_status(self):
+        # the cleanup list shows done first, then working, then idle, then anything else; registry order within one
+        statuses = {"a": "idle", "b": "blocked", "c": "done", "d": "working", "e": None, "f": "done", "g": "idle"}
+        for name in statuses:
+            self.worker(name, workspace=f"ws-{name}")
+        out = self.scan(WS_STATUS_MAP=json.dumps({f"ws-{n}": s for n, s in statuses.items()}))
+        self.assertEqual([(w["name"], w["agent_status"]) for w in out["workers"]],
+                         [("c", "done"), ("f", "done"), ("d", "working"), ("a", "idle"), ("g", "idle"),
+                          ("b", "blocked"), ("e", None)])
+
+    def test_scan_all_sorts_across_repositories(self):
+        other = self.make_repo("other")
+        self.worker("a1", workspace="wa")
+        self.worker("b1", repo=other, workspace="wb")
+        out = self.scan("--all", WS_STATUS_MAP=json.dumps({"wa": "idle", "wb": "done"}))
+        self.assertEqual([w["name"] for w in out["workers"]], ["b1", "a1"])
 
     # --- what the worker is for ----------------------------------------------------------------------------------
 
