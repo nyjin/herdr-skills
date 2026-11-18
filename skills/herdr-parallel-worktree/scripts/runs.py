@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
-"""Registry of workers started by herdr-parallel-worktree: record, scan for cleanup, resume clues.
+"""Registry of workers started by herdr-parallel-worktree: record, list for cleanup, resume clues.
 
 The registry is DATA_DIR/runs.json (DATA_DIR = ${HERDR_SKILLS_DATA_HOME:-~/.local/share/herdr-skills}/herdr-parallel-worktree).
 herdr does not know which worktrees this skill created, so cleanup only ever considers entries recorded here.
+Which workers to clean up is the user's choice: `scan` reports every open run with where its work stands and what,
+if anything, blocks cleaning it up now; it never decides that a worker is finished.
 
 Usage:
   runs.py add --name N --root ROOT --branch B --base SHA --from-branch FB --worktree WT --workspace W --pane P
-              --placement workspace|tab [--brief PATH]
-  runs.py scan --root ROOT [--fetch]      classify open runs of ROOT: candidates, keep, stale (JSON)
-  runs.py mark-cleaned --root ROOT --name N [--session-id SID]
+              --placement workspace|tab [--brief PATH] [--summary TEXT]
+  runs.py scan (--root ROOT | --all) [--fetch]
+                                          every open run of ROOT (or of every repository): where its work stands,
+                                          cleanable or what blocks it (JSON)
+  runs.py mark-cleaned --root ROOT --name N [--agent A] [--session-id SID]
   runs.py mark-open --root ROOT --name N --workspace W --pane P [--placement workspace|tab]
   runs.py relocate --root ROOT --name N --workspace W --pane P [--placement workspace|tab]
                                           an open run reopened in a new place
@@ -148,7 +152,8 @@ def cmd_add(a):
     runs.append({
         "name": a.name, "root": root, "branch": a.branch, "base": a.base, "from_branch": a.from_branch,
         "worktree": a.worktree, "workspace": a.workspace, "pane": a.pane, "placement": a.placement,
-        "brief": a.brief, **session_fields(current_session(a.pane)), "state": "open", "created_at": now(),
+        "brief": a.brief, "summary": a.summary, **session_fields(current_session(a.pane)), "state": "open",
+        "created_at": now(),
         "cleaned_at": None,
     })
     save(runs)
@@ -235,32 +240,135 @@ def workspace_facts(r):
     return facts, None
 
 
-def classify(r, fetch):
-    """Return (kind, reasons, facts); kind is "candidate", "keep" or "stale"."""
-    keep, facts = [], {"placement": placement(r)}
+def plural(n, word):
+    return f"{n} {word}{'' if n == 1 else 's'}"
+
+
+def resolves(root, ref):
+    return git(root, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")[0] == 0
+
+
+def count(root, *revs):
+    rc, out = git(root, "rev-list", "--count", *revs)
+    return int(out) if rc == 0 and out.isdigit() else None
+
+
+def lines(root, *args):
+    rc, out = git(root, *args)
+    return out.splitlines() if rc == 0 and out else ([] if rc == 0 else None)
+
+
+def work_state(r):
+    """Where the run's work stands against the branch it came from. Informational only: it never blocks cleanup,
+    because the branch and its commits stay and a cleaned worker can be resumed."""
+    root, branch, base = r["root"], r["branch"], r["base"]
+    w = {"state": "unknown", "into": None, "commits": None, "pushed": False}
+    if not os.path.isdir(root):
+        return {**w, "text": "unknown: repository not found"}
+    if not resolves(root, f"refs/heads/{branch}"):
+        return {**w, "text": "unknown: branch not found"}
+    if git(root, "rev-parse", "--verify", "--quiet", f"refs/remotes/origin/{branch}")[0] == 0:
+        w["pushed"] = count(root, f"origin/{branch}..{branch}") == 0
+    own = count(root, f"{base}..{branch}") if resolves(root, base) else None
+    fb = r.get("from_branch")
+    targets = [t for t in (fb, f"origin/{fb}") if fb and resolves(root, t)]
+    w["commits"] = count(root, f"{targets[0]}..{branch}") if targets else own
+    if own == 0:
+        return {**w, "state": "no_commits", "commits": 0, "text": "no commits"}
+    for t in targets:
+        if git(root, "merge-base", "--is-ancestor", branch, t)[0] == 0:
+            return {**w, "state": "merged", "into": t, "text": f"merged into {t}"}
+    for t in targets:
+        # `git cherry` lists the commits t lacks, skipping merges: "-" when an equivalent patch is in t (a
+        # cherry-pick, a rebase merge, a one-commit squash). No line at all is not "by patch": nothing to compare.
+        out = lines(root, "cherry", t, branch)
+        if out and all(line.startswith("-") for line in out):
+            return {**w, "state": "same_patches", "into": t, "text": f"in {t} by patch (cherry-pick or rebase)"}
+    # Every file the branch changed since it started is identical in t (a squash merge). The set comes from the
+    # recorded base, not the merge-base: after t was merged back into the branch that would be t itself. A base
+    # made stale that way only adds files, which can make this miss a match, never claim a false one.
+    changed = set(lines(root, "diff", "--no-renames", "--name-only", base, branch) or []) \
+        if own is not None else set()
+    if changed:
+        for t in targets:
+            differ = lines(root, "diff", "--no-renames", "--name-only", t, branch)
+            if differ is not None and not changed & set(differ):
+                return {**w, "state": "same_content", "into": t, "text": f"in {t} by content (squash merge)"}
+    if w["pushed"]:
+        return {**w, "state": "pushed", "text": "pushed, not merged"}
+    if w["commits"] is None:
+        return {**w, "text": "unknown: commits could not be counted"}
+    return {**w, "state": "not_merged", "text": f"not merged ({plural(w['commits'], 'commit')})"}
+
+
+WORK_STATES = ("no_commits", "merged", "same_patches", "same_content", "pushed", "not_merged", "unknown")
+
+
+def last_activity(r, work):
+    """The branch's last commit (committer date), or when the run started if it has no commits of its own."""
+    if work["state"] not in ("no_commits", "unknown"):
+        rc, out = git(r["root"], "log", "-1", "--format=%cI", r["branch"])
+        if rc == 0 and out:
+            return out
+    return r.get("created_at")
+
+
+def summary(r):
+    """The run's one-line task summary: recorded by `add --summary`, or for an older run the title of its brief,
+    `# [<name>] <summary>`. None when neither is there."""
+    if r.get("summary"):
+        return r["summary"]
+    try:
+        with open(r.get("brief") or "", encoding="utf-8") as f:
+            first = f.readline().strip()
+    except (OSError, UnicodeDecodeError):
+        return None
+    head = f"# [{r['name']}] "
+    if not first.startswith(head):
+        return None
+    return first[len(head):].strip() or None
+
+
+def classify(r):
+    """Return (facts, blockers). Nothing about where the work stands blocks: only what would lose work or cut off
+    a live worker does, and an unknown herdr status, which is never read as "closed"."""
+    blockers, facts = [], {"placement": placement(r), "agent_status": None, "focused": False}
     tab = facts["placement"] == "tab"
     found, err = tab_facts(r) if tab else workspace_facts(r)
     if err:
-        # Only an explicit "not found" means the user closed it. Any other failure must not be read as
-        # "closed": that would skip the worker-status check and remove a worktree under a live worker.
-        return "keep", [f"could not query herdr ({err})"], facts
-    facts.update(found)
-    if facts["agent_status"] in ("working", "blocked"):
-        keep.append(f"worker is {facts['agent_status']}")
-    if facts["focused"]:
-        keep.append(f"user is viewing this {'tab' if tab else 'workspace'}")
-    for c in facts.get("companions") or []:
-        if c["agent_status"] in ("working", "blocked"):
-            keep.append(f"{c['label']} is {c['agent_status']}")
-        if c["focused"]:
-            keep.append(f"user is viewing tab {c['label']}")
+        blockers.append(f"herdr could not be queried ({err})")
+    else:
+        facts.update(found)
+        if facts["agent_status"] in ("working", "blocked"):
+            blockers.append(facts["agent_status"])
+        if facts["focused"]:
+            blockers.append(f"user is viewing its {'tab' if tab else 'workspace'}")
+        for c in facts.get("companions") or []:
+            if c["agent_status"] in ("working", "blocked"):
+                blockers.append(f"{c['label']} is {c['agent_status']}")
+            if c["focused"]:
+                blockers.append(f"user is viewing {c['label']}")
 
-    wt, branch, root = r["worktree"], r["branch"], r["root"]
-    if not os.path.isdir(wt):
-        # removed outside this skill: nothing left to delete, only the record to update
-        facts["why"] = "worktree already removed"
-        facts["remove_command"] = None
-        return "stale", [], facts
+    wt, root = r["worktree"], r["root"]
+    facts["worktree_exists"] = os.path.isdir(wt)
+    facts["remove_command"] = None
+    if not facts["worktree_exists"]:
+        # removed outside this skill: nothing left to delete, only the record to mark
+        return facts, blockers
+    rc, dirty = git(wt, "status", "--porcelain", "--untracked-files=all")
+    if rc != 0:
+        blockers.append("git status failed")
+    else:
+        if dirty:
+            blockers.append(plural(len(dirty.splitlines()), "uncommitted change"))
+        # A commit made on a detached HEAD is on no branch: it would go with the worktree.
+        n = count(wt, "HEAD", "--not", "--branches", "--tags", "--remotes")
+        if n is None:
+            blockers.append("could not read the worktree's HEAD")
+        elif n:
+            blockers.append(f"{plural(n, 'commit')} on no branch (detached HEAD)")
+    if err:
+        return facts, blockers
     # The user may have closed the workspace by hand; the worktree then has no workspace to remove it with.
     # A tab worker's worktree was never opened in herdr: git removes it (refusing uncommitted changes), and only
     # then is its own tab closed, never the space it runs in.
@@ -271,62 +379,39 @@ def classify(r, fetch):
     else:
         facts["remove_command"] = (f'herdr worktree remove --workspace {r["workspace"]}' if facts["workspace_open"]
                                    else f'git -C {root} worktree remove {wt}')
-    rc, dirty = git(wt, "status", "--porcelain", "--untracked-files=all")
-    if rc != 0:
-        keep.append("git status failed in worktree")
-    elif dirty:
-        keep.append(f"uncommitted changes ({len(dirty.splitlines())} paths)")
-
-    rc, ahead = git(root, "rev-list", "--count", f'{r["base"]}..{branch}')
-    ahead = int(ahead) if rc == 0 and ahead.isdigit() else None
-    facts["commits"] = ahead
-    if fetch:
-        git(root, "fetch", "--quiet", "--all", "--prune")
-    merged_into = None
-    for target in (r.get("from_branch"), f'origin/{r.get("from_branch")}'):
-        if target and git(root, "rev-parse", "--verify", "--quiet", target)[0] == 0 \
-                and git(root, "merge-base", "--is-ancestor", branch, target)[0] == 0:
-            merged_into = target
-            break
-    pushed = False
-    if git(root, "rev-parse", "--verify", "--quiet", f"origin/{branch}")[0] == 0:
-        rc, unpushed = git(root, "rev-list", "--count", f"origin/{branch}..{branch}")
-        pushed = rc == 0 and unpushed == "0"
-    facts["merged_into"], facts["pushed"] = merged_into, pushed
-
-    if ahead == 0:
-        facts["why"] = "no commits"
-    elif merged_into:
-        facts["why"] = f"merged into {merged_into}"
-    elif pushed:
-        facts["why"] = "pushed, not merged"
-    else:
-        keep.append("commits not merged or pushed")
-    return ("keep" if keep else "candidate"), keep, facts
+    return facts, blockers
 
 
 def cmd_scan(a):
-    runs = load()
-    root = norm_root(a.root)
-    out = {"candidates": [], "keep": [], "stale": [], "untracked_worktrees": []}
-    tracked = set()
-    for r in runs:
-        if r["root"] != root or r["state"] != "open":
-            continue
-        tracked.add(r["worktree"])
-        kind, reasons, facts = classify(r, a.fetch)
-        entry = {"name": r["name"], "branch": r["branch"], "worktree": r["worktree"], "workspace": r["workspace"],
-                 **facts, "agent": facts.get("agent") or r.get("agent"),
-                 "session_id": facts.get("session_id") or r.get("session_id")}
-        if kind == "keep":
-            out["keep"].append({**entry, "reasons": reasons})
-        else:
-            out["candidates" if kind == "candidate" else "stale"].append(entry)
-    wl = herdr_json("worktree", "list", "--cwd", root) or {}
-    for w in wl.get("worktrees", []):
-        if w.get("is_linked_worktree") and w.get("path") not in tracked:
-            out["untracked_worktrees"].append({"path": w.get("path"), "branch": w.get("branch"),
-                                               "workspace": w.get("open_workspace_id")})
+    open_runs = [r for r in load() if r["state"] == "open"]
+    if a.all:
+        roots = list(dict.fromkeys(r["root"] for r in open_runs))
+    else:
+        roots = [norm_root(a.root)]
+    out = {"workers": [], "open_elsewhere": sum(r["root"] not in roots for r in open_runs),
+           "untracked_worktrees": []}
+    for root in roots:
+        if a.fetch and os.path.isdir(root):
+            git(root, "fetch", "--quiet", "--all", "--prune")
+        tracked = set()
+        for r in open_runs:
+            if r["root"] != root:
+                continue
+            tracked.add(os.path.realpath(r["worktree"]))
+            facts, blockers = classify(r)
+            work = work_state(r)
+            out["workers"].append({
+                "name": r["name"], "branch": r["branch"], "root": root, "summary": summary(r),
+                "worktree": r["worktree"], "workspace": r["workspace"], **facts,
+                "created_at": r.get("created_at"), "last_activity": last_activity(r, work), "work": work,
+                "cleanable": not blockers, "blockers": blockers,
+                "agent": facts.get("agent") or r.get("agent"),
+                "session_id": facts.get("session_id") or r.get("session_id")})
+        wl = (herdr_json("worktree", "list", "--cwd", root) if os.path.isdir(root) else None) or {}
+        for w in wl.get("worktrees", []):
+            if w.get("is_linked_worktree") and os.path.realpath(w.get("path") or "/") not in tracked:
+                out["untracked_worktrees"].append({"root": root, "path": w.get("path"), "branch": w.get("branch"),
+                                                   "workspace": w.get("open_workspace_id")})
     print(json.dumps(out, ensure_ascii=False, indent=2))
 
 
@@ -386,7 +471,12 @@ def main():
         s.add_argument(f"--{k}", required=True)
     s.add_argument("--placement", choices=PLACEMENTS, required=True)   # place.py's output; no default to fall back on
     s.add_argument("--brief")
-    s = sub.add_parser("scan"); s.add_argument("--root", required=True); s.add_argument("--fetch", action="store_true")
+    s.add_argument("--summary")   # the one-line task summary of SKILL.md step 3 (the brief's title)
+    s = sub.add_parser("scan")
+    g = s.add_mutually_exclusive_group(required=True)
+    g.add_argument("--root")
+    g.add_argument("--all", action="store_true")
+    s.add_argument("--fetch", action="store_true")
     s = sub.add_parser("mark-cleaned"); s.add_argument("--root", required=True); s.add_argument("--name", required=True)
     s.add_argument("--session-id"); s.add_argument("--agent")
     for cmd in ("mark-open", "relocate"):

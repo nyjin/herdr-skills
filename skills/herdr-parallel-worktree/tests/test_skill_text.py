@@ -1,7 +1,8 @@
 """The skill's own text stays in step with its code: SKILL.md's config check and table name exactly the keys of
 references/config.schema.json, SKILL.md points to the dispatch guide and names both ways a dispatching skill is
-loaded (the `Skill` tool and a `/name` prompt), and brief-filling.md documents the finalize-brief.py options that
-write a brief's Environment and On completion sections.
+loaded (the `Skill` tool and a `/name` prompt), brief-filling.md documents the finalize-brief.py options that
+write a brief's Environment and On completion sections, every `runs.py` call in the docs uses a real subcommand and
+real options, and cleanup.md explains every `work.state` that `runs.py scan` can report.
 Run from the repo root: python3 -m unittest discover -s skills/herdr-parallel-worktree/tests -v
 """
 import json
@@ -17,9 +18,12 @@ REFS = os.path.join(SKILL_DIR, "references")
 RESUME = os.path.join(REFS, "resume.md")
 DELIVER = os.path.join(REFS, "deliver.md")
 PLACE = os.path.join(SKILL_DIR, "scripts", "place.py")
+RUNS = os.path.join(SKILL_DIR, "scripts", "runs.py")
+CLEANUP = os.path.join(REFS, "cleanup.md")
 OPTION = re.compile(r"(?<![\w-])--[a-z][a-z-]*")
 # `place.py <sub> <args>` up to the end of that command: a closing `)`, a pipe, `;`, `&&` or the end of the line
 PLACE_CALL = re.compile(r'place\.py"?\s+([a-z]+)\b([^\n`)|;&]*)')
+RUNS_CALL = re.compile(r'runs\.py"?\s+([a-z][a-z-]*)\b([^\n`)|;&]*)')
 
 
 def read(path):
@@ -105,6 +109,40 @@ class SkillTextTest(unittest.TestCase):
                 self.assertTrue(lines, f"no runs.py {cmd} line")
                 for line in lines:
                     self.assertIn("--placement", line)
+
+    def test_runs_py_calls_in_docs_exist(self):
+        subs = {"add", "scan", "mark-cleaned", "mark-open", "relocate", "show"}
+        offered = {s: set(OPTION.findall(help_text(RUNS, s))) for s in subs}
+        used = set()
+        for path in doc_paths():
+            for sub, rest in RUNS_CALL.findall(read(path)):
+                used.add(sub)
+                with self.subTest(doc=os.path.basename(path), call=f"runs.py {sub}{rest}"):
+                    self.assertIn(sub, subs)
+                    self.assertEqual(set(OPTION.findall(rest)) - offered[sub], set())
+        self.assertTrue({"add", "scan", "mark-cleaned"} <= used, used)
+
+    def test_cleanup_scans_the_current_repository_or_all(self):
+        scans = [rest for sub, rest in RUNS_CALL.findall(read(CLEANUP)) if sub == "scan"]
+        self.assertTrue(any("--root" in r for r in scans), scans)
+        self.assertTrue(any("--all" in r for r in scans), scans)
+
+    def test_add_records_the_summary(self):
+        # the cleanup list shows what each worker is for from this summary
+        lines = [l for l in read(SKILL_MD).splitlines() if re.search(r'runs\.py"? add\b.*--name', l)]
+        self.assertTrue(lines, "no runs.py add line in SKILL.md")
+        for line in lines:
+            self.assertIn("--summary", line)
+
+    def test_cleanup_documents_every_work_state(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("runs", RUNS)
+        runs = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(runs)
+        text = read(CLEANUP)
+        for state in runs.WORK_STATES:
+            with self.subTest(state=state):
+                self.assertIn(f"| `{state}` |", text)
 
     def test_finalize_options_documented(self):
         text = read(BRIEF_FILLING)
