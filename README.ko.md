@@ -96,6 +96,7 @@ herdr 자체의 플러그인입니다. Claude Code가 아니라 `herdr plugin in
 | `herdr-plugins/<name>/` | herdr 플러그인 하나: `herdr-plugin.toml`, 스크립트, `README.md` / `README.ko.md`, 그리고 자기 `tests/` |
 | `docs/superpowers/` | 설계 문서(`specs/`)와 구현 계획(`plans/`) |
 | `scripts/check.sh` | 저장소 검사 전부. 로컬과 CI에서 똑같이 돌립니다 |
+| `scripts/release.sh` | `skills/`가 바뀌었을 때 CI에서 스킬 릴리스를 만듭니다 |
 | `install.sh` | 스킬 개별 설치 |
 
 ## 기여하기
@@ -106,14 +107,27 @@ herdr 자체의 플러그인입니다. Claude Code가 아니라 `herdr plugin in
 
 1. `skills/<name>/SKILL.md`를 만듭니다. frontmatter의 `name`은 디렉터리 이름과 같아야 하고, 소문자·숫자·하이픈만 씁니다.
 2. `README.md`와 `README.ko.md`의 스킬 표(`skills:start`와 `skills:end` 마커 사이)에 알파벳 순서로 한 줄씩 추가합니다.
-3. 머지한 뒤에는 `gh skill publish --tag v<version>`으로 릴리스를 만듭니다. 그래야 `gh skill` 사용자에게 변경이 전달됩니다. 릴리스 태그가 곧 스킬의 버전입니다.
+3. `feat:` 커밋으로 올립니다. 머지하면 CI가 릴리스를 만들어 `gh skill` 사용자에게 전달합니다([검사와 릴리스](#검사와-릴리스) 참고).
 
 ### herdr 플러그인 추가하기
 
 1. `herdr-plugins/<name>/`에 `herdr-plugin.toml`(버전은 여기에 둡니다), `README.md`, `README.ko.md`를 만듭니다.
 2. 두 README의 herdr 플러그인 표(`herdr-plugins:start`와 `herdr-plugins:end` 마커 사이)에 알파벳 순서로 한 줄씩 추가합니다.
 
-CI(`.github/workflows/skills-check.yaml`)는 `scripts/check.sh`를 돌립니다. `gh skill publish --dry-run`으로 스킬 스펙을 검증하고, `name`과 디렉터리 이름이 같은지, 두 README의 표가 `skills/`·`herdr-plugins/`와 맞는지, 언어 규칙을 지키는지 확인하고, 스모크 테스트와 단위 테스트를 돌립니다.
+### 검사와 릴리스
+
+CI(`.github/workflows/skills-check.yaml`)는 pull request와 `main` push마다 `scripts/check.sh`를 돌립니다. `gh skill publish --dry-run`으로 스킬 스펙을 검증하고, `name`과 디렉터리 이름이 같은지, 두 README의 표가 `skills/`·`herdr-plugins/`와 맞는지, 언어 규칙을 지키는지 확인하고, 릴리스 버전 결정을 테스트하고, 스모크 테스트와 단위 테스트를 돌립니다.
+
+`main` push가 검사를 통과하면 CI가 릴리스를 만들어 `gh skill` 사용자에게 변경을 전달합니다. `scripts/release.sh`가 `gh skill publish --tag v<next>`를 실행합니다. 릴리스 태그가 곧 스킬의 버전입니다. 마지막 `v<major>.<minor>.<patch>` 태그 이후 커밋 가운데 `skills/`를 바꾼 커밋만 세고, 그 커밋들의 [Conventional Commits](https://www.conventionalcommits.org/) 타입으로 올릴 자리를 정합니다. 여러 개면 가장 큰 쪽을 따릅니다.
+
+| `skills/`를 바꾼 커밋 | 릴리스 |
+|---|---|
+| 호환을 깨는 변경: `type!:` 또는 `BREAKING CHANGE:` 꼬리말 | major |
+| `feat` | minor |
+| `fix` 또는 `perf` | patch |
+| 그 밖의 타입뿐(`docs`, `test`, `refactor`, `chore` 등) | 없음 |
+
+`skills/` 밖의 커밋으로는 릴리스가 나가지 않습니다. herdr 플러그인의 버전은 자기 `herdr-plugin.toml`에 있습니다. `gh skill publish`는 브랜치 끝 커밋에 태그를 달기 때문에, 릴리스 job이 돌기 전에 `main`이 더 나아갔다면 그 실행은 아무것도 릴리스하지 않고 더 새로운 push의 실행이 릴리스합니다. `scripts/release.sh --dry-run`은 지금 체크아웃이라면 무엇을 릴리스할지 출력만 하고, 릴리스는 만들지 않습니다.
 
 ## 라이선스
 

@@ -96,6 +96,7 @@ None live here at the moment. [peek](https://github.com/nyjin/herdr-peek), which
 | `herdr-plugins/<name>/` | one herdr plugin: `herdr-plugin.toml`, its scripts, `README.md` / `README.ko.md`, and its `tests/` |
 | `docs/superpowers/` | design documents (`specs/`) and implementation plans (`plans/`) |
 | `scripts/check.sh` | every repository check, run the same way locally and in CI |
+| `scripts/release.sh` | publishes a skills release from CI when `skills/` changed |
 | `install.sh` | installs skills individually |
 
 ## Contributing
@@ -106,14 +107,27 @@ All text in the repository is English. Korean appears only in the `README.ko.md`
 
 1. Create `skills/<name>/SKILL.md`. The frontmatter `name` must equal the directory name and use only lowercase letters, digits and hyphens.
 2. Add a row to the Skills table in both `README.md` and `README.ko.md`, between the `skills:start` and `skills:end` markers, in alphabetical order.
-3. After merging, publish a release so `gh skill` users get the change: `gh skill publish --tag v<version>`. The release tag is the skills' version.
+3. Commit it as a `feat:`. After merging, CI publishes a release so `gh skill` users get it (see [Checks and releases](#checks-and-releases)).
 
 ### Adding a herdr plugin
 
 1. Create `herdr-plugins/<name>/` with its `herdr-plugin.toml` (its version lives there), a `README.md` and a `README.ko.md`.
 2. Add a row to the herdr plugins table in both READMEs, between the `herdr-plugins:start` and `herdr-plugins:end` markers, in alphabetical order.
 
-CI (`.github/workflows/skills-check.yaml`) runs `scripts/check.sh`: it validates the skills with `gh skill publish --dry-run`, checks that each `name` matches its directory, checks both READMEs' tables against `skills/` and `herdr-plugins/`, checks the language rule, and runs the smoke and unit tests.
+### Checks and releases
+
+CI (`.github/workflows/skills-check.yaml`) runs `scripts/check.sh` on pull requests and pushes to `main`: it validates the skills with `gh skill publish --dry-run`, checks that each `name` matches its directory, checks both READMEs' tables against `skills/` and `herdr-plugins/`, checks the language rule, tests the release decision, and runs the smoke and unit tests.
+
+When the checks pass on a push to `main`, CI publishes a release so `gh skill` users get the change: `scripts/release.sh` runs `gh skill publish --tag v<next>`. The release tag is the skills' version. Only the commits since the last `v<major>.<minor>.<patch>` tag that change `skills/` count, and their [Conventional Commits](https://www.conventionalcommits.org/) types set the bump; the largest wins:
+
+| Commits that change `skills/` | Release |
+|---|---|
+| a breaking change: `type!:` or a `BREAKING CHANGE:` footer | major |
+| `feat` | minor |
+| `fix` or `perf` | patch |
+| only other types (`docs`, `test`, `refactor`, `chore`, ...) | none |
+
+Commits outside `skills/` never publish a release: a herdr plugin's version lives in its `herdr-plugin.toml`. If `main` moved on before the release job ran, that run publishes nothing and the newer push's run does, since `gh skill publish` tags the branch's tip. `scripts/release.sh --dry-run` prints what the current checkout would publish, without publishing.
 
 ## License
 
