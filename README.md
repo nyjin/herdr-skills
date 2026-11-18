@@ -11,7 +11,7 @@ To install one skill, put its name from the table below in `<skill>`.
 <!-- skills:start -->
 | Skill | Description |
 |---|---|
-| [`herdr-parallel-worktree`](skills/herdr-parallel-worktree/SKILL.md) | Hands coding work inside herdr to visible workers, one git worktree and one `claude` worker per task, so you can watch each from the sidebar and step in. Each worker lands under its repository's space (as a workspace named after the task), or as a tab in your current space when herdr shows no space for that repository, never in a new top-level space. Works for a single ticket you want to review before the PR as well as several tasks in parallel, and leaves the tabs your herdr plugins lay out in place. Workers get a brief built from a customizable template; it runs on sensible defaults and the first run lists the settings you can change. Finished workers can be cleaned up and resumed later by name, conversation included. |
+| [`herdr-parallel-worktree`](skills/herdr-parallel-worktree/SKILL.md) | Hands coding work inside herdr to visible workers, one git worktree and one `claude` worker per task, so you can watch each from the sidebar and step in. Each worker lands under its repository's space (as a workspace named after the task), or as a tab in your current space when herdr shows no space for that repository, never in a new top-level space. Works for a single ticket you want to review before the PR as well as several tasks in parallel, and leaves the tabs your herdr plugins lay out in place. Workers get a brief built from a customizable template; it runs on sensible defaults and the first run lists the settings you can change. After starting workers, and whenever you ask, it lists your current repository's workers that can go now under the heading **Cleanable workers**, sorted by status (done, working, idle), each with its status, what it was started for, its branch, last activity and where its work stands, names the ones left out and why, and cleans up only the ones you pick; the branches stay, and a cleaned-up worker can be resumed later by name, conversation included. |
 <!-- skills:end -->
 
 ### Install
@@ -75,7 +75,7 @@ Per-user settings live outside the skill directory, so they survive reinstalls a
 ${HERDR_SKILLS_DATA_HOME:-~/.local/share/herdr-skills}/<skill>/
 ```
 
-`herdr-parallel-worktree` keeps `config.json` (worker `claude` flags and the hook switch; written with defaults on the first run, and you can edit it or ask Claude to change it), `briefs/` (generated worker briefs), `runs.json` (started workers and their Claude session IDs, used for cleanup and resume) and an optional `brief-template.md` (your own brief template) there. Ask Claude to "change the brief template" to customize it.
+`herdr-parallel-worktree` keeps `config.json` (worker `claude` flags and the hook switch; written with defaults on the first run, and you can edit it or ask Claude to change it), `briefs/` (generated worker briefs), `runs.json` (started workers, their one-line task summaries and Claude session IDs, used for the cleanup list and resume) and an optional `brief-template.md` (your own brief template) there. Ask Claude to "change the brief template" to customize it.
 
 ## herdr plugins
 

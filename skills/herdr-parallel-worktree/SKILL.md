@@ -2,7 +2,7 @@
 name: herdr-parallel-worktree
 license: MIT
 description: >-
-  Lets one Claude session hand coding work inside herdr (HERDR_ENV=1) to visible workers: each task gets its own git worktree and its own claude in the herdr sidebar, where the user can watch and step in. Use it when a task, even a single ticket, should run in its own worktree or branch that the user can watch or step into (for example to review before the PR), when several tasks or alternative fixes should run at the same time, when a subagent or hook hands back a HERDR-HANDOFF block, or to give an existing worker more work, resume it or clean up finished ones; it also manages the worker brief template and its hooks. Not for quick edits done in this session, explanations, or anything outside herdr.
+  Lets one Claude session hand coding work inside herdr (HERDR_ENV=1) to visible workers: each task gets its own git worktree and its own claude in the herdr sidebar, where the user can watch and step in. Use it when a task, even a single ticket, should run in its own worktree or branch that the user can watch or step into (for example to review before the PR), when several tasks or alternative fixes should run at the same time, when a subagent or hook hands back a HERDR-HANDOFF block, or to give an existing worker more work, resume it or clean it up; it also manages the worker brief template and its hooks. Not for quick edits done in this session, explanations, or anything outside herdr.
 ---
 
 # herdr parallel worktree
@@ -102,7 +102,7 @@ git -C "$ROOT" cat-file -e "HEAD:<path the task touches>" 2>/dev/null || echo "n
 
 If a path the task touches is missing from HEAD or modified (` M`, `??`), start from `HEAD` anyway. Say in the brief that this path has changes in the source checkout the worker cannot see, so the worker raises it in its own pane if it needs them, and put it in the report (step 4): to include them, the user commits and you deliver a follow-up (`references/deliver.md`). The orchestrator never commits or stashes on the user's behalf. Changes unrelated to the tasks need no mention.
 
-**Offer to clean up finished workers.** Read `references/cleanup.md` and run its scan. If there are candidates, offer them in the report after the new workers start; cleaning up removes worktrees, so never do it without the user's go-ahead.
+**Cleanup waits for the report.** Nothing here decides which earlier workers may go: the ones that can be cleaned up are listed at the end of the report after the new workers start (step 4), and the user picks.
 
 **Receiving a handoff.** A subagent stopped by a hook ends its reply with a block like this, and a worker puts one in its `## Result`:
 
@@ -230,13 +230,17 @@ Workers start working immediately, so doing this step task by task still runs th
   - **Folder trust dialog** ("Is this a project you trust?"): Claude Code does not yet trust the source repository. It does not appear for worktrees of trusted repositories, and `--dangerously-skip-permissions` does not skip it
   - **Permission mode warning**: shown once to users running `--dangerously-skip-permissions` for the first time
 
-Once the worker is running and named, record it. This stores the agent and the session reference herdr reports for the pane, which is what lets the user resume it after cleanup:
+Once the worker is running and named, record it. This stores the agent and the session reference herdr reports for the pane, which is what lets the user resume it after cleanup, and the one-line summary, which the cleanup list shows as what the worker is for:
 
 ```bash
-python3 "<skill directory>/scripts/runs.py" add --name <name> --root "$ROOT" --branch <branch> --base "$BASE" --from-branch "$FROM_BRANCH" --worktree "$WT" --workspace "$W" --pane "$P" --placement "$PLACEMENT" --brief "$BRIEF"
+SUMMARY="$(cat <<'EOF'
+<the same one-line task summary as in agent start>
+EOF
+)"
+python3 "<skill directory>/scripts/runs.py" add --name <name> --root "$ROOT" --branch <branch> --base "$BASE" --from-branch "$FROM_BRANCH" --worktree "$WT" --workspace "$W" --pane "$P" --placement "$PLACEMENT" --brief "$BRIEF" --summary "$(printf '%s' "$SUMMARY" | tr '\n\t' '  ')"
 ```
 
-If `session_id` in the output is `null` (not reported yet), that is fine: cleanup re-reads it from the pane before removing anything. If `add` fails because an open run with the same name exists, a previous worker still holds that name: handle it with the cleanup scan (`references/cleanup.md`) or pick another name.
+If `session_id` in the output is `null` (not reported yet), that is fine: cleanup re-reads it from the pane before removing anything. If `add` fails because an open run with the same name exists, a previous worker still holds that name: pick another name. Never clean up the earlier worker to free it; that is the user's pick (`references/cleanup.md`).
 
 ## 4. Wait and watch
 
@@ -244,8 +248,9 @@ Once all workers are started, report in one message, then wait on each. The repo
 
 - First line, the template: `Template: default (say "change the brief template" to customize)` for the default, otherwise `Template: <path>`. This line is how the user learns the template can be changed.
 - The target repository (`ROOT`) and, per task: where it landed in the sidebar (the `<name>` workspace and which space it is under, or a tab in this session's space because herdr shows no space for that repository: step 1's `why`), the `<name>` tab the worker runs in (name the plugins that laid out the workspace, if any, and one still running), branch, base, worktree path (with the convention it came from, or "herdr default"), worker arguments, the brief's path and its steps section, so the user can see that every step they asked for made it in.
-- Everything that would once have been a question: assumptions written into a brief, uncommitted changes a worker cannot see, a worktree directory missing from `.gitignore`, five or more workers, cleanup candidates, a `main-checkout` handoff.
+- Everything that would once have been a question: assumptions written into a brief, uncommitted changes a worker cannot see, a worktree directory missing from `.gitignore`, five or more workers, a `main-checkout` handoff.
 - How to change course: tell you, and you deliver it to the running worker (`references/deliver.md`); or step into its tab directly.
+- Last, **Cleanable workers** (the heading in the user's language): scan right before the report and show the workers of the current repository (the checkout this session works in; every repository's when it is in none) that can be cleaned up now, the ones left out with their reasons, and how many are open in other repositories, leaving out every worker this run started, then let the user pick (`references/cleanup.md` sections 1 and 2). Clean up only what they pick (its sections 3 and 4) before waiting on the new workers. This and a user's request are the only times cleanup comes up.
 
 ```bash
 herdr agent wait <name> --timeout 1800000
@@ -271,7 +276,7 @@ If a `## Result` contains `HERDR-HANDOFF` blocks, route them exactly as in step 
 
 The default is to **leave everything in place**: the user decides on push, PR and merge after reviewing each worker's worktree.
 
-- **Cleaning up** finished workers — offered in the report of the next run, or when the user asks: follow `references/cleanup.md`. It only removes workers that are recorded, not `working` or `blocked`, clean, and whose work is merged, pushed or empty, always after confirmation, and reports how to resume each one.
+- **Cleaning up** workers — listed at the end of the report after new workers start (step 4), or when the user asks: follow `references/cleanup.md`. Nothing marks a worker as finished, so the skill never decides which may go: it lists the current repository's recorded workers that can be cleaned up now (every repository's when there is no current one or the user asks), with what each is for and where its work stands, names the ones left out (working, blocked, being viewed, uncommitted changes) with their reasons, and removes only the ones the user picks. It keeps their branches and reports how to resume each one.
 - **Resuming** a worker by name ("resume proj-101"): follow `references/resume.md`. It recreates the worktree at the recorded path, works out the agent's native resume option from the recorded clues (the same session reference herdr uses to restore agents), and checks that the conversation came back.
 
 Cleanup keeps branches. Delete a branch only when the user asks, after merging.
@@ -310,3 +315,4 @@ P="$(printf '%s' "$PANE" | jq -r .pane)"
 - Ask the user anything before the workers start; it goes in the report after they start (step 4)
 - Suggest `!` or turning the hooks off to get around them, or ask whether to: installing them was the user's choice
 - Start a new worker for work whose handoff names an existing worker as `owner:`; deliver it to that worker
+- Clean up a worker the user did not pick, suggest which to pick, or bring cleanup up anywhere but the end of the report after workers start (step 4) and the user's own request

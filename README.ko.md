@@ -11,7 +11,7 @@
 <!-- skills:start -->
 | 스킬 | 설명 |
 |---|---|
-| [`herdr-parallel-worktree`](skills/herdr-parallel-worktree/SKILL.md) | herdr 안에서 코딩 작업을 눈에 보이는 작업자에게 맡깁니다. 작업마다 git worktree와 `claude` 작업자를 하나씩 띄워, 사이드바에서 각각의 진행을 보고 직접 들어가 볼 수 있습니다. 작업자는 그 저장소의 스페이스 밑에 작업 이름의 workspace로 붙습니다. herdr에 그 저장소의 스페이스가 없으면 지금 스페이스의 탭으로 뜨고, 새 최상위 스페이스는 만들지 않습니다. PR 전에 직접 리뷰할 티켓 한 건에도, 여러 작업을 병렬로 돌릴 때에도 쓰며, herdr 플러그인이 만든 탭은 그대로 둡니다. 작업자 지시서는 바꿀 수 있는 템플릿으로 만들고, 설정은 기본값으로 바로 동작하고, 처음 실행할 때 바꿀 수 있는 설정을 안내합니다. 끝난 작업자는 정리했다가 나중에 이름으로 다시 열 수 있으며, 대화 내용도 그대로 이어집니다. |
+| [`herdr-parallel-worktree`](skills/herdr-parallel-worktree/SKILL.md) | herdr 안에서 코딩 작업을 눈에 보이는 작업자에게 맡깁니다. 작업마다 git worktree와 `claude` 작업자를 하나씩 띄워, 사이드바에서 각각의 진행을 보고 직접 들어가 볼 수 있습니다. 작업자는 그 저장소의 스페이스 밑에 작업 이름의 workspace로 붙습니다. herdr에 그 저장소의 스페이스가 없으면 지금 스페이스의 탭으로 뜨고, 새 최상위 스페이스는 만들지 않습니다. PR 전에 직접 리뷰할 티켓 한 건에도, 여러 작업을 병렬로 돌릴 때에도 쓰며, herdr 플러그인이 만든 탭은 그대로 둡니다. 작업자 지시서는 바꿀 수 있는 템플릿으로 만들고, 설정은 기본값으로 바로 동작하고, 처음 실행할 때 바꿀 수 있는 설정을 안내합니다. 작업자를 띄운 뒤와 요청할 때마다 **정리 가능한 워커** 목록을 보여 줍니다. 지금 저장소에서 바로 정리할 수 있는 작업자를 상태(done, working, idle) 순으로 놓고, 작업자마다 상태, 무엇을 하려고 띄웠는지, 브랜치, 마지막 활동, 작업이 어디까지 반영됐는지를 보여 주고, 빠진 작업자는 이유와 함께 알려 주며, 고른 것만 정리합니다. 브랜치는 남고, 정리한 작업자는 나중에 이름으로 다시 열 수 있으며, 대화 내용도 그대로 이어집니다. |
 <!-- skills:end -->
 
 ### 설치
@@ -75,7 +75,7 @@ npx skills add nyjin/herdr-skills -s herdr-parallel-worktree -a claude-code -g
 ${HERDR_SKILLS_DATA_HOME:-~/.local/share/herdr-skills}/<skill>/
 ```
 
-`herdr-parallel-worktree`는 이곳에 `config.json`(작업자 `claude` 옵션과 훅 스위치. 처음 실행할 때 기본값으로 만들어지며, 직접 고치거나 Claude에게 바꿔 달라고 하면 됩니다), `briefs/`(만들어진 작업자 지시서), `runs.json`(띄운 작업자와 그 Claude 세션 ID를 기록하며, 정리와 재개에 쓰임), 그리고 선택적으로 `brief-template.md`(내 지시서 템플릿)를 둡니다. 템플릿을 바꾸려면 Claude에게 "지시서 템플릿 바꿔줘"라고 하세요.
+`herdr-parallel-worktree`는 이곳에 `config.json`(작업자 `claude` 옵션과 훅 스위치. 처음 실행할 때 기본값으로 만들어지며, 직접 고치거나 Claude에게 바꿔 달라고 하면 됩니다), `briefs/`(만들어진 작업자 지시서), `runs.json`(띄운 작업자와 그 한 줄 작업 요약, Claude 세션 ID를 기록하며, 정리 목록과 재개에 쓰임), 그리고 선택적으로 `brief-template.md`(내 지시서 템플릿)를 둡니다. 템플릿을 바꾸려면 Claude에게 "지시서 템플릿 바꿔줘"라고 하세요.
 
 ## herdr 플러그인
 
